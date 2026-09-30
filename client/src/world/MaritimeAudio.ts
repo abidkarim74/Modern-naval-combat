@@ -221,6 +221,86 @@ export class MaritimeAudio {
     }
   }
 
+  /** A loud artillery report with a sharp crack, low blast, and open-air echo. */
+  soundGunfire(): void {
+    if (this.status === "off" || this.status === "blocked") {
+      void this.setEnabled(true).then(() => {
+        if (this.status === "on") this.soundGunfire();
+      });
+      return;
+    }
+    const context = this.context;
+    if (!context || !this.master || this.status !== "on") return;
+
+    const start = context.currentTime;
+    const duration = .9;
+    const noiseBuffer = context.createBuffer(1, Math.ceil(context.sampleRate * duration), context.sampleRate);
+    const samples = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < samples.length; i++) {
+      const time = i / context.sampleRate;
+      const crack = Math.exp(-time * 42);
+      const rumble = Math.exp(-time * 3.5);
+      samples[i] = (Math.random() * 2 - 1) * Math.max(crack * .8, rumble * .48);
+    }
+
+    const crack = context.createBufferSource();
+    crack.buffer = noiseBuffer;
+    const crackFilter = context.createBiquadFilter();
+    crackFilter.type = "highpass";
+    crackFilter.frequency.setValueAtTime(500, start);
+    crackFilter.frequency.exponentialRampToValueAtTime(2_800, start + .035);
+    const crackGain = context.createGain();
+    crackGain.gain.setValueAtTime(2.1, start);
+    crackGain.gain.exponentialRampToValueAtTime(.0001, start + .14);
+    crack.connect(crackFilter).connect(crackGain).connect(this.master);
+    crack.onended = () => { crack.disconnect(); crackFilter.disconnect(); crackGain.disconnect(); };
+    crack.start(start);
+    crack.stop(start + .15);
+
+    const blast = context.createBufferSource();
+    blast.buffer = noiseBuffer;
+    const blastFilter = context.createBiquadFilter();
+    blastFilter.type = "lowpass";
+    blastFilter.frequency.setValueAtTime(1_400, start);
+    blastFilter.frequency.exponentialRampToValueAtTime(130, start + .82);
+    const blastGain = context.createGain();
+    blastGain.gain.setValueAtTime(1.15, start);
+    blastGain.gain.exponentialRampToValueAtTime(.0001, start + .88);
+    blast.connect(blastFilter).connect(blastGain).connect(this.master);
+    blast.onended = () => { blast.disconnect(); blastFilter.disconnect(); blastGain.disconnect(); };
+    blast.start(start);
+    blast.stop(start + duration);
+
+    const thump = context.createOscillator();
+    thump.type = "sine";
+    thump.frequency.setValueAtTime(78, start);
+    thump.frequency.exponentialRampToValueAtTime(27, start + .72);
+    const thumpGain = context.createGain();
+    thumpGain.gain.setValueAtTime(.92, start);
+    thumpGain.gain.exponentialRampToValueAtTime(.0001, start + .76);
+    thump.connect(thumpGain).connect(this.master);
+    this.calls.add(thump);
+    thump.onended = () => { thump.disconnect(); thumpGain.disconnect(); this.calls.delete(thump); };
+    thump.start(start);
+    thump.stop(start + .78);
+
+    const echo = context.createBufferSource();
+    echo.buffer = noiseBuffer;
+    const echoFilter = context.createBiquadFilter();
+    echoFilter.type = "lowpass";
+    echoFilter.frequency.setValueAtTime(720, start + .18);
+    echoFilter.frequency.exponentialRampToValueAtTime(170, start + 1.15);
+    const echoGain = context.createGain();
+    echoGain.gain.setValueAtTime(.54, start + .18);
+    echoGain.gain.exponentialRampToValueAtTime(.0001, start + 1.18);
+    const echoPan = context.createStereoPanner();
+    echoPan.pan.value = .12;
+    echo.connect(echoFilter).connect(echoGain).connect(echoPan).connect(this.master);
+    echo.onended = () => { echo.disconnect(); echoFilter.disconnect(); echoGain.disconnect(); echoPan.disconnect(); };
+    echo.start(start + .18);
+    echo.stop(start + 1.2);
+  }
+
   private readonly onFirstInteraction = (event: Event): void => {
     if (event.target instanceof Element && event.target.closest("button, input, select")) return;
     if (this.status === "off" || this.status === "blocked") void this.setEnabled(true);
@@ -228,7 +308,7 @@ export class MaritimeAudio {
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     if (event.target instanceof Element && event.target.closest("input, select, textarea, button, [contenteditable]")) return;
-    if (!["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright", "h"].includes(event.key.toLowerCase())) return;
+    if (!["w", "a", "s", "d", " ", "arrowup", "arrowdown", "arrowleft", "arrowright", "h"].includes(event.key.toLowerCase())) return;
     this.onFirstInteraction(event);
     if (event.key.toLowerCase() === "h" && !event.repeat) {
       if (this.enabled) void this.setEnabled(true).then(() => this.soundHorn());

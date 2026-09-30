@@ -199,10 +199,12 @@ export function App() {
         <div className="control-hint"><kbd>W</kbd><span>Throttle</span></div>
         <div className="control-hint"><kbd>S</kbd><span>Astern / brake</span></div>
         <div className="control-hint"><kbd>A</kbd><kbd>D</kbd><span>Rudder</span></div>
+        {cameraView === "forward" && <div className="control-hint"><kbd>←</kbd><kbd>↑</kbd><kbd>↓</kbd><kbd>→</kbd><span>Aim gun</span></div>}
+        {cameraView === "forward" && <div className="control-hint"><kbd>Space</kbd><span>Fire</span></div>}
         <div className="control-hint"><kbd>H</kbd><span>Ship horn</span></div>
         <span className="hint-divider" />
         <span className="mouse-hint">
-          {cameraView === "chase" ? "Drag to look · Scroll to zoom" : "Looking ahead from behind the main gun"} · Click or steer to start audio
+          {cameraView === "chase" ? "Drag to look · Scroll to zoom" : "↑ / ↓ elevation · ← / → traverse · Space fire"} · Click or steer to start audio
         </span>
       </footer>
 

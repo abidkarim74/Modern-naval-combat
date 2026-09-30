@@ -1,6 +1,7 @@
 import { Color3 } from "@babylonjs/core/Maths/math.color";
 import { Quaternion, Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { Mesh } from "@babylonjs/core/Meshes/mesh";
+import type { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import { VertexData } from "@babylonjs/core/Meshes/mesh.vertexData";
 import { CreateBox } from "@babylonjs/core/Meshes/Builders/boxBuilder";
 import { CreateCylinder } from "@babylonjs/core/Meshes/Builders/cylinderBuilder";
@@ -14,13 +15,20 @@ import type { Scene } from "@babylonjs/core/scene";
 import type { BoatSimulationState } from "@naval/shared";
 
 import { addDestroyerDetails, createDeckSurfaceTexture, createFacetedDeckhouse } from "./destroyerDetails";
+import { addDestroyerForedeck } from "./destroyerForedeck";
+import type { ForedeckGunControls } from "./destroyerForedeck";
+import { addDestroyerHouseFront } from "./destroyerHouseFront";
 import { DESTROYER_HOUSES, MAST_FOOT_Y, HANGAR_ROOF_Y, BOAT_DECK_Y, roofHeight, sideSurface, seatSurfaceBox, seatSurfaceCylinder } from "./destroyerMounts";
 import type { DeckhouseLayout, MountSurface } from "./destroyerMounts";
 
 export interface DestroyerVisual {
   readonly root: Mesh;
   readonly shadowCasters: readonly Mesh[];
+  readonly gunCameraMount: TransformNode;
   update(state: BoatSimulationState, interpolation: number): void;
+  updateGunAim(traverseDirection: number, elevationDirection: number, deltaSeconds: number): void;
+  fireGun(worldTime: number): boolean;
+  updateGunEffects(deltaSeconds: number, worldTime: number): void;
 }
 
 /** Procedural Flight IIA Arleigh Burke silhouette, in meters. Bow is +Z.
@@ -48,6 +56,8 @@ export function createDestroyer(scene: Scene): DestroyerVisual {
   const glass = paint("bridge-glazing", "#163740", .18, .4);
   const white = paint("deck-markings", "#d6d9d2");
   const safetyOrange = paint("safety-equipment-orange", "#dc5836", .72);
+  const deckRed = paint("forecastle-red-safety-marking", "#b45d55", .94);
+  const capstanGreen = paint("forecastle-green-capstan", "#187f6c", .72);
   const underwater = paint("antifouling-hull", "#633b34", .9);
   const register = (mesh: Mesh, material: PBRMaterial, parent = root) => {
     mesh.parent = parent;
@@ -267,7 +277,7 @@ export function createDestroyer(scene: Scene): DestroyerVisual {
       for(let dz=-4.6;dz<=4.6;dz+=1.53) tube("funnel-guardrail-post",[[side*5.1,baseY+.3,z+dz],[side*5.1,baseY+1.4,z+dz]],.035,light);
     }
   }
-  // Aft 64-cell and forward 32-cell Mk 41 launch deck grids.
+  // Aft 64-cell Mk 41 launch deck grid. The forward bank is detailed separately.
   const vls=(z:number,rows:number,y:number)=>{
     box("Mk41-launcher-coaming",7.35,.42,rows*1.3+.55,0,y,z,dark);
     for(let row=0;row<rows;row++) for(let col=0;col<8;col++) {
@@ -277,11 +287,7 @@ export function createDestroyer(scene: Scene): DestroyerVisual {
       box("VLS-hatch-lifting-point",.11,.08,.26,x,y+.42,cellZ-.32,dark);
     }
   };
-  vls(42,4,5.95); vls(-30,8,12.05);
-  cylinder("Mk45-gun-ring",4.5,.7,0,6.55,56,dark);
-  tapered("Mk45-5-inch-gun",4.6,5.2,3.25,.9,0,6.8,56,light);
-  tube("127mm-gun-barrel",[[0,8.6,58],[0,9.6,65.4]],.17,dark);
-  cylinder("gun-mantlet",1.1,1.4,0,8.6,58,gray).rotation.x=Math.PI/2;
+  vls(-30,8,12.05);
 
   box("mast-deck-foundation",3.9,.28,3.9,0,MAST_FOOT_Y+.10,20,gray);
   tapered("main-mast-base",3.6,3.6,31.9-MAST_FOOT_Y,1.15,0,MAST_FOOT_Y+.12,20,gray);
@@ -375,8 +381,10 @@ export function createDestroyer(scene: Scene): DestroyerVisual {
     plate.position.copyFrom(surface.point.add(surface.normal.scale(.02)));
   }
 
+  addDestroyerHouseFront(scene,root,casters,{gray,light,deck,dark,radar,glass,white,orange:safetyOrange},deckHeight);
+  const foredeckGun: ForedeckGunControls = addDestroyerForedeck(scene,root,casters,{gray,light,dark,radar,white,orange:safetyOrange,red:deckRed,green:capstanGreen},deckHeight,z=>stationValue(z,1));
   const details=addDestroyerDetails(scene,root,casters,{gray,light,deck,dark,radar,glass,white,orange:safetyOrange},deckHeight,z=>stationValue(z,1),hullSurface);
-  const animatedParts=new Set([scanner,...details.animated]);
+  const animatedParts=new Set([scanner,...details.animated,...foredeckGun.animatedMeshes]);
   // Material batching keeps the detailed vessel to a small number of draw calls.
   for(const material of new Set(casters.filter(m=>!animatedParts.has(m)).map(m=>m.material))) {
     const parts=casters.filter(m=>!animatedParts.has(m)&&m.material===material);
@@ -388,13 +396,19 @@ export function createDestroyer(scene: Scene): DestroyerVisual {
     }
   }
   let previousTime=0;
-  return {root,shadowCasters:casters,update(state,interpolation){
+  return {root,shadowCasters:casters,gunCameraMount:foredeckGun.cameraMount,update(state,interpolation){
     const t=Math.max(0,Math.min(1,interpolation));
     const lerp=(a:number,b:number)=>a+(b-a)*t;
     root.position.set(lerp(state.previousPositionX,state.positionX),lerp(state.previousPositionY,state.positionY),lerp(state.previousPositionZ,state.positionZ));
     root.rotation.set(-lerp(state.previousPitch,state.pitch),lerp(state.previousHeading,state.heading),lerp(state.previousRoll,state.roll));
     scanner.rotation.y=state.elapsedTime*.65;
     details.update(state,Math.min(.1,Math.max(0,state.elapsedTime-previousTime)));previousTime=state.elapsedTime;
+  },updateGunAim(traverseDirection,elevationDirection,deltaSeconds){
+    foredeckGun.updateAim(traverseDirection,elevationDirection,deltaSeconds);
+  },fireGun(worldTime){
+    return foredeckGun.fire(worldTime);
+  },updateGunEffects(deltaSeconds,worldTime){
+    foredeckGun.updateFireEffects(deltaSeconds,worldTime);
   }};
 }
 

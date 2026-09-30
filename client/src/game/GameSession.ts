@@ -54,6 +54,7 @@ export class GameSession {
 
   private readonly input = new BoatKeyboardInput();
   private readonly inputScratch: ControlInput = { throttle: 0, steering: 0 };
+  private readonly gunAimScratch = { traverse: 0, elevation: 0 };
   private readonly boat: DestroyerVisual;
   private readonly sky: MaritimeSky;
   private readonly ocean: OceanRenderer;
@@ -68,6 +69,7 @@ export class GameSession {
   private simulationMilliseconds = 0;
   private simulationStepCount = 0;
   private lastSimulationTimeMs = 0;
+  private cameraView: "chase" | "forward" = "chase";
 
   constructor(
     private readonly engine: AbstractEngine,
@@ -109,10 +111,12 @@ export class GameSession {
     this.camera.inputs.removeByType("FollowCameraKeyboardMoveInput");
     this.camera.attachControl(true);
     this.forwardCamera = new FreeCamera("forward-gun-camera", Vector3.Zero(), this.scene);
-    this.forwardCamera.fov = 0.94;
+    this.forwardCamera.fov = 1.25;
     this.forwardCamera.minZ = 0.2;
     this.forwardCamera.maxZ = settings.viewDistanceMeters;
-    this.forwardCamera.rotation.set(0, 0, 0);
+    this.forwardCamera.parent = this.boat.gunCameraMount;
+    this.forwardCamera.position.set(0, 4.12, -8.25);
+    this.forwardCamera.rotation.set(-0.18, 0, 0);
     this.scene.activeCamera = this.camera;
     this.boat.root.computeWorldMatrix(true);
     this.applyQuality(this.qualityValue);
@@ -120,6 +124,7 @@ export class GameSession {
 
   update(frameDeltaSeconds: number): void {
     const frameDelta = Math.min(Math.max(frameDeltaSeconds, 0), MAX_FRAME_SECONDS);
+    const firePressed = this.input.consumeGunFirePress();
     this.accumulator = Math.min(
       this.accumulator + frameDelta,
       FIXED_SIMULATION_STEP * MAX_SIMULATION_STEPS_PER_FRAME,
@@ -127,7 +132,7 @@ export class GameSession {
 
     let stepsThisFrame = 0;
     while (this.accumulator >= FIXED_SIMULATION_STEP && stepsThisFrame < MAX_SIMULATION_STEPS_PER_FRAME) {
-      this.input.readInto(this.inputScratch);
+      this.input.readInto(this.inputScratch, this.cameraView === "chase");
       const simulationStart = performance.now();
       this.simulation.update(this.inputScratch, FIXED_SIMULATION_STEP);
       this.simulationMilliseconds += performance.now() - simulationStart;
@@ -140,10 +145,19 @@ export class GameSession {
       this.accumulator = 0;
     }
 
+    if (this.cameraView === "forward") {
+      this.input.readGunAimInto(this.gunAimScratch);
+      this.boat.updateGunAim(this.gunAimScratch.traverse, this.gunAimScratch.elevation, frameDelta);
+    }
+
     const state = this.simulation.state;
     const interpolation = this.accumulator / FIXED_SIMULATION_STEP;
     this.boat.update(state, interpolation);
     this.boat.root.computeWorldMatrix(true);
+    this.boat.updateGunEffects(frameDelta, state.elapsedTime);
+    if (this.cameraView === "forward" && firePressed && this.boat.fireGun(state.elapsedTime)) {
+      this.audio.soundGunfire();
+    }
     this.cameraAnchor.position.x = this.boat.root.position.x;
     this.cameraAnchor.position.z = this.boat.root.position.z;
     this.cameraAnchor.position.y += (this.boat.root.position.y - this.cameraAnchor.position.y) *
@@ -154,19 +168,11 @@ export class GameSession {
     this.cameraAnchor.rotation.y += headingDelta * (1-Math.exp(-frameDelta*1.1));
     const targetFov=.82+Math.min(.035,state.speed*.0022);
     this.camera.fov += (targetFov-this.camera.fov)*(1-Math.exp(-frameDelta*1.5));
-    this.forwardCamera.position.copyFrom(Vector3.TransformCoordinates(
-      new Vector3(0, 12.8, 50.5), this.boat.root.getWorldMatrix(),
-    ));
-    this.forwardCamera.rotation.set(
-      this.boat.root.rotation.x + 0.10,
-      this.boat.root.rotation.y,
-      this.boat.root.rotation.z,
-    );
     this.ocean.update(
       state.elapsedTime,
       this.boat.root.position.x,
       this.boat.root.position.z,
-      this.scene.activeCamera?.position ?? this.camera.position,
+      this.scene.activeCamera?.globalPosition ?? this.camera.position,
       this.boat.root.rotation.y,
       state.forwardSpeed,
       state.yawRate,
@@ -189,6 +195,7 @@ export class GameSession {
   }
 
   setCameraView(view: "chase" | "forward"): void {
+    this.cameraView = view;
     this.scene.activeCamera = view === "forward" ? this.forwardCamera : this.camera;
   }
 

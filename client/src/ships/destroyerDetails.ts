@@ -5,7 +5,6 @@ import { CreateCylinder } from "@babylonjs/core/Meshes/Builders/cylinderBuilder"
 import { CreateSphere } from "@babylonjs/core/Meshes/Builders/sphereBuilder";
 import { CreateTorus } from "@babylonjs/core/Meshes/Builders/torusBuilder";
 import { CreateTube } from "@babylonjs/core/Meshes/Builders/tubeBuilder";
-import { CreatePlane } from "@babylonjs/core/Meshes/Builders/planeBuilder";
 import { DynamicTexture } from "@babylonjs/core/Materials/Textures/dynamicTexture";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import type { PBRMaterial } from "@babylonjs/core/Materials/PBR/pbrMaterial";
@@ -54,25 +53,16 @@ export function addDestroyerDetails(scene: Scene, root: Mesh, casters: Mesh[], p
     }
   };
 
-  // Forecastle anchor windlasses, wildcats, chain beds and cable fairleads.
+  // Mooring bitts and chocks continue along both sides of the ship.
   for (const side of [-1, 1]) {
-    const x = side * 1.65;
-    box("anchor-chain-bed", 1.5, .10, 8.2, x, deckHeight(69) + .08, 69, dark);
-    cylinder("anchor-windlass-base", 1.45, .28, x, deckHeight(65) + .18, 65, light);
-    cylinder("anchor-wildcat", .95, .6, x, deckHeight(65) + .56, 65, dark);
-    cylinder("anchor-capstan-head", .8, .35, x, deckHeight(65) + 1.0, 65, light);
-    for (let i = 0; i < 25; i++) {
-      const z = 65.3 + i * .31;
-      const link = register(CreateTorus("anchor-chain-link", { diameter: .30, thickness: .075, tessellation: 8 }, scene), dark);
-      link.position.set(x, deckHeight(z) + .15, z); link.scaling.z = 1.55;
-      if (i % 2) link.rotation.z = Math.PI / 2;
-    }
     const hawse = register(CreateTorus("bow-hawse-rim", { diameter: 1.05, thickness: .18, tessellation: 16 }, scene), radar);
-    const hawseSurface=hullSurface(side,4.4,71);
-    seatSurfaceCylinder(hawse,hawseSurface,.18,.02);
-    const anchor=(y:number,z:number)=>{const s=hullSurface(side,y,z);return s.point.add(s.normal.scale(.15)).asArray();};
-    tube("anchor-shank", [anchor(4.4,71),anchor(3.0,71)], .14, dark);
-    tube("anchor-flukes", [anchor(3.3,70.2),anchor(2.9,71),anchor(3.3,71.8)], .16, dark);
+    seatSurfaceCylinder(hawse, hullSurface(side, 4.4, 71), .18, .02);
+    const anchor = (y: number, z: number) => {
+      const surface = hullSurface(side, y, z);
+      return surface.point.add(surface.normal.scale(.15)).asArray();
+    };
+    tube("anchor-shank", [anchor(4.4, 71), anchor(3.0, 71)], .14, dark);
+    tube("anchor-flukes", [anchor(3.3, 70.2), anchor(2.9, 71), anchor(3.3, 71.8)], .16, dark);
     for (const z of [-71, -58, -12, 32, 58, 72]) {
       const y = deckHeight(z), bx = side * (hullBeam(z) - 1.05);
       box("double-bitt-footplate", 1.3, .14, 1.4, bx, y + .1, z, radar);
@@ -82,7 +72,6 @@ export function addDestroyerDetails(scene: Scene, root: Mesh, casters: Mesh[], p
       for (const dz of [-.52, .52]) box("chock-upright", .28, .47, .32, side * (hullBeam(z) - .22), y + .45, z + 1.4 + dz, light);
     }
   }
-  cylinder("forecastle-jackstaff", .075, 3.4, 0, 8.6, 76.5, light);
   cylinder("stern-ensign-staff", .09, 5.6, 0, deckHeight(-76.7)+2.79, -76.7, light);
 
   // Wrapped walkways, expansion joints, access ladders and bridge fittings.
@@ -195,18 +184,6 @@ export function addDestroyerDetails(scene: Scene, root: Mesh, casters: Mesh[], p
     cylinder("aft-whip-antenna", .075, 7.5, side * 5.1, HANGAR_ROOF_Y+4.43, -42, gray);
     cylinder("aft-antenna-foot", .5, .7, side * 5.1, HANGAR_ROOF_Y+.34, -42, light);
   }
-
-  // Forecastle helicopter/UNREP square and gun training arc, visible in the photo.
-  const foreTexture = new DynamicTexture("forecastle-operating-markings", { width: 512, height: 512 }, scene, true);
-  foreTexture.hasAlpha = true; const fc = foreTexture.getContext();
-  fc.strokeStyle = "rgba(235,235,218,.85)"; fc.lineWidth = 5; fc.strokeRect(100, 150, 310, 240);
-  fc.beginPath(); fc.moveTo(256, 50); fc.lineTo(256, 470); fc.moveTo(30, 270); fc.lineTo(480, 270); fc.stroke();
-  fc.strokeStyle = "rgba(221,172,139,.7)"; fc.lineWidth = 3; fc.setLineDash([12, 12]);
-  fc.beginPath(); fc.arc(256, 220, 186, .25, Math.PI * 1.93); fc.stroke(); foreTexture.update();
-  const marking = white.clone("forecastle-deck-paint")!; marking.albedoTexture = foreTexture; marking.useAlphaFromAlbedoTexture = true;
-  const plane = register(CreatePlane("forecastle-operating-square", { width: 7.8, height: 12, sideOrientation: Mesh.DOUBLESIDE }, scene), marking);
-  plane.rotation.x = Math.PI / 2; plane.rotation.y = Math.PI; plane.position.set(0, deckHeight(61) + .045, 61);
-  plane.rotation.x -= .034;
 
   // A parked folded-rotor Seahawk gives the aft working deck its proper scale.
   const hx = 3.0, hz = -62, hy = deckHeight(hz);
