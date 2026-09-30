@@ -38,4 +38,8 @@ npm test
 - `shared/` — renderer-independent boat movement and analytical ocean wave queries shared by the client and future server simulation.
 - `docs/architecture.md` — simulation/rendering boundaries and decisions for future ship classes.
 
-The boat simulation uses a fixed 60 Hz step and four hull water probes. The same wave parameters drive the shader and buoyancy samples, so rendering and motion stay in phase while simulation code remains independent of Babylon.js.
+The boat simulation uses a fixed 60 Hz step and 21 weighted waterplane probes. The same wave parameters drive the shader and buoyancy samples, so rendering and motion stay in phase while simulation code remains independent of Babylon.js.
+
+The detailed destroyer follows the supplied overhead and broadside photo references: a raked stem and flared bow, chamfered Aegis deckhouse with octagonal array faces, separated uptake groups, closed twin hangars, a folded-rotor Seahawk, anchor chains, liferafts, RHIBs, antenna platforms, deck hatches and ventilation. Static fittings are merged by material; rudders and twin five-blade propellers remain animated.
+
+Handling uses stern rudder lift, rotational inertia, hydrodynamic yaw damping, surge/sway added mass and drag. Momentum stays in world coordinates as the hull turns, so the vessel develops sideslip and loses speed under hard helm. Distributed waterplane sampling drives damped heave, pitch and roll. Coefficients approximate heavy-vessel handling rather than certified ship performance. The voyage log reports real distance travelled in nautical miles; there is no movement time scaling. Clouds remain in world space, and approximately 50 seconds of foam history remains on the actual path through a turn.

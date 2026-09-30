@@ -11,7 +11,7 @@ import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 import { Scene } from "@babylonjs/core/scene";
 import type { GraphicsQualitySettings } from "../game/graphicsQuality";
 
-export const SUN_DIRECTION = new Vector3(0.02, 0.23, 0.98).normalize();
+export const SUN_DIRECTION = new Vector3(-0.42, 0.68, 0.60).normalize();
 
 export interface MaritimeSky {
   readonly sunDirection: Vector3;
@@ -53,7 +53,7 @@ export function createMaritimeSky(
   const sunLight = new DirectionalLight("daylight-sun", SUN_DIRECTION.scale(-1), scene);
   sunLight.diffuse = new Color3(1, 0.89, 0.72);
   sunLight.specular = new Color3(1, 0.94, 0.82);
-  sunLight.intensity = 2.1;
+  sunLight.intensity = 1.8;
   sunLight.position = SUN_DIRECTION.scale(350);
   sunLight.shadowMinZ = 0.5;
   sunLight.shadowMaxZ = 650;

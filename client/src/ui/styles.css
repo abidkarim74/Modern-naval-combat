@@ -270,3 +270,5 @@ kbd {
   .control-hint kbd { min-width: 17px; height: 18px; }
   .hint-divider { display: none; }
 }
+
+.voyage-reading { display: flex; justify-content: space-between; gap: 12px; margin-top: 14px; color: #a6c2cc; font: 11px ui-monospace, monospace; letter-spacing: .04em; }

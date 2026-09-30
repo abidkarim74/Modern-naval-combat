@@ -14,6 +14,8 @@ type GameStatus =
 const EMPTY_TELEMETRY: GameTelemetry = {
   speedKnots: 0,
   throttlePercent: 0,
+  distanceMeters: 0,
+  rudderDegrees: 0,
   headingDegrees: 0,
   fps: 0,
   frameTimeMs: 0,
@@ -150,6 +152,7 @@ export function App() {
         <div className="throttle-track" aria-label={`Throttle ${Math.round(telemetry.throttlePercent)} percent`}>
           <span style={{ width: `${Math.min(100, Math.abs(telemetry.throttlePercent))}%`, background: telemetry.throttlePercent < 0 ? "#eeac75" : undefined }} />
         </div>
+        <div className="voyage-reading"><span>Log {(telemetry.distanceMeters / 1852).toFixed(2)} nm</span><span>Rudder {Math.abs(telemetry.rudderDegrees).toFixed(0)}°{Math.abs(telemetry.rudderDegrees) < .5 ? "" : telemetry.rudderDegrees < 0 ? " P" : " S"}</span></div>
       </section>
 
       <aside className="performance-panel hud-panel" aria-label="Development performance metrics">

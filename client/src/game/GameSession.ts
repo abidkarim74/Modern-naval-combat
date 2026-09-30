@@ -33,6 +33,8 @@ const METERS_PER_SECOND_TO_KNOTS = 1.943844;
 export interface GameTelemetry {
   readonly speedKnots: number;
   readonly throttlePercent: number;
+  readonly distanceMeters: number;
+  readonly rudderDegrees: number;
   readonly headingDegrees: number;
   readonly fps: number;
   readonly frameTimeMs: number;
@@ -92,10 +94,10 @@ export class GameSession {
       this.scene,
       this.cameraAnchor,
     );
-    this.camera.radius = 125;
-    this.camera.heightOffset = 80;
+    this.camera.radius = 190;
+    this.camera.heightOffset = 115;
     this.camera.rotationOffset = 320;
-    this.camera.cameraAcceleration = 0.035;
+    this.camera.cameraAcceleration = 0.016;
     this.camera.lowerRadiusLimit = 105;
     this.camera.upperRadiusLimit = 420;
     this.camera.lowerHeightOffsetLimit = 20;
@@ -146,7 +148,12 @@ export class GameSession {
     this.cameraAnchor.position.z = this.boat.root.position.z;
     this.cameraAnchor.position.y += (this.boat.root.position.y - this.cameraAnchor.position.y) *
       (1 - Math.exp(-frameDelta * 2));
-    this.cameraAnchor.rotation.y = this.boat.root.rotation.y;
+    // A damped camera follows the vessel's travelled path. Heading lag lets
+    // the hull turn within the frame before the viewpoint catches up.
+    const headingDelta=Math.atan2(Math.sin(this.boat.root.rotation.y-this.cameraAnchor.rotation.y),Math.cos(this.boat.root.rotation.y-this.cameraAnchor.rotation.y));
+    this.cameraAnchor.rotation.y += headingDelta * (1-Math.exp(-frameDelta*1.1));
+    const targetFov=.82+Math.min(.035,state.speed*.0022);
+    this.camera.fov += (targetFov-this.camera.fov)*(1-Math.exp(-frameDelta*1.5));
     this.forwardCamera.position.copyFrom(Vector3.TransformCoordinates(
       new Vector3(0, 12.8, 50.5), this.boat.root.getWorldMatrix(),
     ));
@@ -157,11 +164,12 @@ export class GameSession {
     );
     this.ocean.update(
       state.elapsedTime,
-      state.positionX,
-      state.positionZ,
+      this.boat.root.position.x,
+      this.boat.root.position.z,
       this.scene.activeCamera?.position ?? this.camera.position,
-      state.heading,
+      this.boat.root.rotation.y,
       state.forwardSpeed,
+      state.yawRate,
     );
     this.sky.update(this.boat.root.position);
     this.ambientSprites.update(state.elapsedTime, state.positionX, state.positionZ, state.heading);
@@ -224,6 +232,8 @@ export class GameSession {
     this.onTelemetry({
       speedKnots: state.speed * METERS_PER_SECOND_TO_KNOTS,
       throttlePercent: state.throttle * 100,
+      distanceMeters: state.distanceTraveledMeters,
+      rudderDegrees: state.rudderAngleRadians * 180 / Math.PI,
       headingDegrees: normalizeHeading(state.heading),
       fps,
       frameTimeMs: fps > 0 ? 1_000 / fps : 0,

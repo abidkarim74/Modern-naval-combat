@@ -37,12 +37,18 @@ fn main(input: VertexInputs) -> FragmentInputs {
   let right = vec2<f32>(cos(uniforms.boatHeading), -sin(uniforms.boatHeading));
   let along = dot(delta, forward);
   let across = dot(delta, right);
-  let halfBeam = mix(0.7, 9.0, smoothstep(0.0, 30.0, 78.0 - abs(along)));
+  let halfBeam = max(0.3, 8.5 * (1.0 - smoothstep(25.0, 78.0, along)));
   let speedFactor = smoothstep(0.4, 12.0, abs(uniforms.boatSpeed));
-  let bowMound = exp(-pow((along - 77.0) / 7.0, 2.0)) * exp(-pow(across / 7.0, 2.0));
-  let shoulder = exp(-pow((abs(across) - halfBeam - 1.4) / 3.4, 2.0)) * exp(-pow(along / 69.0, 8.0));
-  let transomTrough = exp(-pow((along + 77.0) / 10.0, 2.0)) * exp(-pow(across / 12.0, 2.0));
-  let disturbedHeight = height + speedFactor * (0.16 * bowMound + 0.055 * shoulder * sin(along * 0.31 - uniforms.time * 3.1) - 0.09 * transomTrough);
+  // pow is undefined for negative bases, including even powers of signed coordinates.
+  let bowMound = exp(-pow(abs(along - 77.0) / 7.0, 2.0)) * exp(-pow(abs(across) / 7.0, 2.0));
+  let shoulder = exp(-pow(abs(abs(across) - halfBeam - 1.4) / 3.4, 2.0)) * exp(-pow(abs(along) / 69.0, 8.0));
+  let transomTrough = exp(-pow(abs(along + 77.0) / 10.0, 2.0)) * exp(-pow(abs(across) / 12.0, 2.0));
+  let wakeDistance = max(-along - 69.0, 0.0);
+  let kelvinDistance = abs(across) - (8.0 + wakeDistance * 0.354);
+  let kelvinEnvelope = smoothstep(0.0, 16.0, wakeDistance) * exp(-wakeDistance / 200.0)
+    * exp(-pow(abs(kelvinDistance) / (3.5 + wakeDistance * 0.018), 2.0));
+  let kelvinHeight = 0.24 * speedFactor * kelvinEnvelope * sin(wakeDistance * 0.38 - abs(across) * 0.29);
+  let disturbedHeight = height + speedFactor * (0.45 * bowMound + 0.12 * shoulder * sin(along * 0.31 - uniforms.time * 3.1) - 0.16 * transomTrough) + kelvinHeight;
 
   let displacedWorld = uniforms.world * vec4<f32>(vertexInputs.position.x, disturbedHeight, vertexInputs.position.z, 1.0);
   vertexOutputs.position = uniforms.worldViewProjection * vec4<f32>(vertexInputs.position.x, disturbedHeight, vertexInputs.position.z, 1.0);

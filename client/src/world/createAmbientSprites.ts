@@ -54,8 +54,8 @@ export class AmbientSprites {
     for (let index = 0; index < this.clouds.length; index += 1) {
       const cloud = this.clouds[index];
       if (cloud) {
-        cloud.position.x = boatX + (this.cloudOffsetsX[index] ?? 0);
-        cloud.position.z = boatZ + (this.cloudOffsetsZ[index] ?? 0);
+        cloud.position.x = boatX + wrapWorldOffset((this.cloudOffsetsX[index] ?? 0) - boatX, 6000);
+        cloud.position.z = boatZ + wrapWorldOffset((this.cloudOffsetsZ[index] ?? 0) - boatZ, 6000);
       }
     }
 
@@ -199,3 +199,6 @@ function drawBirdCell(context: CanvasRenderingContext2D, frame: number): void {
   context.fill();
   context.restore();
 }
+
+// Clouds keep fixed world positions until they wrap beyond the visible range.
+function wrapWorldOffset(value: number, span: number): number { return ((value + span / 2) % span + span) % span - span / 2; }

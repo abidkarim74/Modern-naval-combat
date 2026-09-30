@@ -39,12 +39,18 @@ void main(void) {
   vec2 right = vec2(cos(boatHeading), -sin(boatHeading));
   float along = dot(delta, forward);
   float across = dot(delta, right);
-  float halfBeam = mix(0.7, 9.0, smoothstep(0.0, 30.0, 78.0 - abs(along)));
+  float halfBeam = max(0.3, 8.5 * (1.0 - smoothstep(25.0, 78.0, along)));
   float speedFactor = smoothstep(0.4, 12.0, abs(boatSpeed));
-  float bowMound = exp(-pow((along - 77.0) / 7.0, 2.0)) * exp(-pow(across / 7.0, 2.0));
-  float shoulder = exp(-pow((abs(across) - halfBeam - 1.4) / 3.4, 2.0)) * exp(-pow(along / 69.0, 8.0));
-  float transomTrough = exp(-pow((along + 77.0) / 10.0, 2.0)) * exp(-pow(across / 12.0, 2.0));
-  height += speedFactor * (0.16 * bowMound + 0.055 * shoulder * sin(along * 0.31 - time * 3.1) - 0.09 * transomTrough);
+  // pow is undefined for negative bases, including even powers of signed coordinates.
+  float bowMound = exp(-pow(abs(along - 77.0) / 7.0, 2.0)) * exp(-pow(abs(across) / 7.0, 2.0));
+  float shoulder = exp(-pow(abs(abs(across) - halfBeam - 1.4) / 3.4, 2.0)) * exp(-pow(abs(along) / 69.0, 8.0));
+  float transomTrough = exp(-pow(abs(along + 77.0) / 10.0, 2.0)) * exp(-pow(abs(across) / 12.0, 2.0));
+  float wakeDistance = max(-along - 69.0, 0.0);
+  float kelvinDistance = abs(across) - (8.0 + wakeDistance * 0.354);
+  float kelvinEnvelope = smoothstep(0.0, 16.0, wakeDistance) * exp(-wakeDistance / 200.0)
+    * exp(-pow(abs(kelvinDistance) / (3.5 + wakeDistance * 0.018), 2.0));
+  float kelvinHeight = 0.24 * speedFactor * kelvinEnvelope * sin(wakeDistance * 0.38 - abs(across) * 0.29);
+  height += speedFactor * (0.45 * bowMound + 0.12 * shoulder * sin(along * 0.31 - time * 3.1) - 0.16 * transomTrough) + kelvinHeight;
 
   vec4 displacedWorld = world * vec4(position.x, height, position.z, 1.0);
   vWorldPosition = displacedWorld.xyz;

@@ -26,6 +26,7 @@ const UNIFORM_NAMES = [
   "boatPosition",
   "boatHeading",
   "boatSpeed",
+  "boatYawRate",
   ...OCEAN_WAVES.flatMap((_, index) => [
     `wave${index}`,
     `waveFrequency${index}`,
@@ -65,7 +66,7 @@ export class OceanRenderer {
     this.setQuality(settings);
   }
 
-  update(timeSeconds: number, centerX: number, centerZ: number, eyePosition: Vector3, heading: number, speed: number): void {
+  update(timeSeconds: number, centerX: number, centerZ: number, eyePosition: Vector3, heading: number, speed: number, yawRate: number): void {
     this.mesh.position.x = Math.round(centerX / OCEAN_ORIGIN_SNAP_METERS) * OCEAN_ORIGIN_SNAP_METERS;
     this.mesh.position.z = Math.round(centerZ / OCEAN_ORIGIN_SNAP_METERS) * OCEAN_ORIGIN_SNAP_METERS;
     this.material.setFloat("time", timeSeconds);
@@ -74,6 +75,7 @@ export class OceanRenderer {
     this.material.setVector3("boatPosition", this.boatPosition);
     this.material.setFloat("boatHeading", heading);
     this.material.setFloat("boatSpeed", speed);
+    this.material.setFloat("boatYawRate", yawRate);
   }
 
   setQuality(settings: GraphicsQualitySettings): void {
