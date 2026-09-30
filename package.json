@@ -1,0 +1,23 @@
+{
+  "name": "naval-combat",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "client",
+    "server",
+    "shared"
+  ],
+  "scripts": {
+    "dev:client": "npm run build -w @naval/shared && npm run dev -w @naval/client --",
+    "dev:server": "npm run dev -w @naval/server --",
+    "build": "npm run build -w @naval/shared && npm run build -w @naval/client && npm run build -w @naval/server",
+    "typecheck": "npm run build -w @naval/shared && npm run typecheck -w @naval/client && npm run typecheck -w @naval/server",
+    "check": "npm run typecheck && npm run build",
+    "test": "npm run build -w @naval/shared && node --test shared/tests/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=22.9.0",
+    "npm": ">=10.0.0"
+  }
+}
