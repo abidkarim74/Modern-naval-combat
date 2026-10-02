@@ -8,7 +8,10 @@ export interface ShipControlIntent {
   readonly rudder: number;
 }
 
-export { OCEAN_WAVES, sampleOceanHeight } from "./oceanWaves.js";
-export type { OceanWave } from "./oceanWaves.js";
+export { OCEAN_WAVES, sampleOceanHeight, sampleOceanSurface } from "./oceanWaves.js";
+export type { OceanWave, OceanSurfaceSample } from "./oceanWaves.js";
 export { BoatSimulation, BOAT_SIMULATION_CONFIG, FIXED_SIMULATION_STEP } from "./simulation/boatSimulation.js";
 export type { BoatSimulationState, ControlInput } from "./simulation/boatSimulation.js";
+export { CruiseMissileSimulation } from "./simulation/cruiseMissileSimulation.js";
+export type { CruiseMissileLaunch, CruiseMissileState, MissileVector, MissileFlightPhase } from "./simulation/cruiseMissileSimulation.js";
+export { ISLAND_CENTER, ISLAND_RADIUS_X, ISLAND_RADIUS_Z, ISLAND_SEABED_Y, ISLAND_BASE, ISLAND_HARBOR, ISLAND_LAGOON, ISLAND_DOCK_OBSTACLES, islandShoreRadius, islandHeight } from "./world/islandTerrain.js";

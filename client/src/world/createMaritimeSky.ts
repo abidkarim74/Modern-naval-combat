@@ -17,7 +17,7 @@ export interface MaritimeSky {
   readonly sunDirection: Vector3;
   readonly skyMaterial: ShaderMaterial;
   setQuality(settings: GraphicsQualitySettings, shadowCasters: readonly Mesh[]): void;
-  update(boatPosition: Vector3): void;
+  update(focus: Vector3, islandView?: boolean, timeSeconds?: number): void;
 }
 
 export function createMaritimeSky(
@@ -34,6 +34,10 @@ export function createMaritimeSky(
   skyMesh.infiniteDistance = true;
   skyMesh.isPickable = false;
   skyMesh.applyFog = false;
+  skyMesh.alwaysSelectAsActiveMesh = true;
+  // Shade only visible far-depth sky after sea and terrain have filled depth.
+  skyMesh.renderingGroupId = 1;
+  scene.setRenderingAutoClearDepthStencil(1, false);
 
   const skyMaterial = createDaylightMaterial(scene, SUN_DIRECTION);
   skyMesh.material = skyMaterial;
@@ -49,6 +53,8 @@ export function createMaritimeSky(
   ambient.diffuse = new Color3(0.67, 0.81, 0.92);
   ambient.groundColor = new Color3(0.12, 0.18, 0.20);
   ambient.intensity = 0.72;
+  const seaBounce = ambient.groundColor.clone();
+  const landBounce = new Color3(.23, .28, .22);
 
   const sunLight = new DirectionalLight("daylight-sun", SUN_DIRECTION.scale(-1), scene);
   sunLight.diffuse = new Color3(1, 0.89, 0.72);
@@ -61,10 +67,19 @@ export function createMaritimeSky(
   let shadowGenerator: ShadowGenerator | undefined;
   let shadowResolution = -1;
   let currentCasters: readonly Mesh[] = [];
+  let skyDetailLevel = -1;
 
   const setQuality = (nextSettings: GraphicsQualitySettings, shadowCasters: readonly Mesh[]) => {
+    if (skyDetailLevel !== nextSettings.skyDetailLevel) {
+      skyMaterial.setDefine("SKY_DETAIL_LEVEL", String(nextSettings.skyDetailLevel));
+      skyDetailLevel = nextSettings.skyDetailLevel;
+    }
     currentCasters = shadowCasters;
-    if (shadowResolution === nextSettings.shadowMapSize) return;
+    if (shadowResolution === nextSettings.shadowMapSize) {
+      const shadowMap = shadowGenerator?.getShadowMap();
+      if (shadowMap) shadowMap.renderList = [...shadowCasters];
+      return;
+    }
     shadowGenerator?.dispose();
     shadowGenerator = undefined;
     shadowResolution = nextSettings.shadowMapSize;
@@ -72,8 +87,10 @@ export function createMaritimeSky(
 
     shadowGenerator = new ShadowGenerator(shadowResolution, sunLight);
     shadowGenerator.usePercentageCloserFiltering = true;
-    shadowGenerator.bias = 0.0004;
-    shadowGenerator.normalBias = 0.018;
+    // The shadow texels cover a 155 m hull; tiny default offsets cause diagonal acne on steel faces.
+    const texelScale = 1024 / shadowResolution;
+    shadowGenerator.bias = .0012 * texelScale;
+    shadowGenerator.normalBias = .10 * texelScale;
     shadowGenerator.setDarkness(0.20);
     for (const caster of currentCasters) shadowGenerator.addShadowCaster(caster, false);
   };
@@ -84,9 +101,14 @@ export function createMaritimeSky(
     sunDirection: SUN_DIRECTION,
     skyMaterial,
     setQuality,
-    update(boatPosition) {
-      sunLight.position.copyFrom(boatPosition).addInPlaceFromFloats(
-        SUN_DIRECTION.x * 350, SUN_DIRECTION.y * 350, SUN_DIRECTION.z * 350,
+    update(focus, islandView = false, timeSeconds = 0) {
+      skyMaterial.setFloat("time", timeSeconds);
+      ambient.intensity = islandView ? 1.05 : .72;
+      ambient.groundColor.copyFrom(islandView ? landBounce : seaBounce);
+      const distance = islandView ? 850 : 350;
+      sunLight.shadowMaxZ = islandView ? 1_800 : 650;
+      sunLight.position.copyFrom(focus).addInPlaceFromFloats(
+        SUN_DIRECTION.x * distance, SUN_DIRECTION.y * distance, SUN_DIRECTION.z * distance,
       );
     },
   };

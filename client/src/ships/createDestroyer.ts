@@ -3,10 +3,10 @@ import { Quaternion, Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { Mesh } from "@babylonjs/core/Meshes/mesh";
 import type { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import { VertexData } from "@babylonjs/core/Meshes/mesh.vertexData";
+import { mergeStaticMeshes } from "./mergeStaticMeshes";
 import { CreateBox } from "@babylonjs/core/Meshes/Builders/boxBuilder";
 import { CreateCylinder } from "@babylonjs/core/Meshes/Builders/cylinderBuilder";
 import { CreateSphere } from "@babylonjs/core/Meshes/Builders/sphereBuilder";
-import { CreateTorus } from "@babylonjs/core/Meshes/Builders/torusBuilder";
 import { CreateTube } from "@babylonjs/core/Meshes/Builders/tubeBuilder";
 import { CreatePlane } from "@babylonjs/core/Meshes/Builders/planeBuilder";
 import { DynamicTexture } from "@babylonjs/core/Materials/Textures/dynamicTexture";
@@ -17,14 +17,21 @@ import type { BoatSimulationState } from "@naval/shared";
 import { addDestroyerDetails, createDeckSurfaceTexture, createFacetedDeckhouse } from "./destroyerDetails";
 import { addDestroyerForedeck } from "./destroyerForedeck";
 import type { ForedeckGunControls } from "./destroyerForedeck";
+import { createVlsLaunchCell } from "./destroyerVls";
+import type { VlsLaunchCell } from "./destroyerVls";
 import { addDestroyerHouseFront } from "./destroyerHouseFront";
-import { DESTROYER_HOUSES, MAST_FOOT_Y, HANGAR_ROOF_Y, BOAT_DECK_Y, roofHeight, sideSurface, seatSurfaceBox, seatSurfaceCylinder } from "./destroyerMounts";
+import { addDestroyerFlightDeck } from "./destroyerFlightDeck";
+import { addDestroyerMast } from "./destroyerMast";
+import { addDestroyerReferenceFittings } from "./destroyerReferenceFittings";
+import { createDestroyerHullPaint, createDestroyerUpperworksPaint } from "./destroyerSurface";
+import { DESTROYER_HOUSES, HANGAR_ROOF_Y, roofHeight, sideSurface, seatSurfaceBox, seatSurfaceCylinder } from "./destroyerMounts";
 import type { DeckhouseLayout, MountSurface } from "./destroyerMounts";
 
 export interface DestroyerVisual {
   readonly root: Mesh;
   readonly shadowCasters: readonly Mesh[];
   readonly gunCameraMount: TransformNode;
+  readonly missileLaunchCells: readonly VlsLaunchCell[];
   update(state: BoatSimulationState, interpolation: number): void;
   updateGunAim(traverseDirection: number, elevationDirection: number, deltaSeconds: number): void;
   fireGun(worldTime: number): boolean;
@@ -46,13 +53,14 @@ export function createDestroyer(scene: Scene): DestroyerVisual {
     material.metallic = metallic;
     return material;
   };
-  const gray = paint("haze-gray-steel", "#89969c");
-  const light = paint("upperworks-gray", "#a5afb1");
+  const gray = createDestroyerUpperworksPaint(scene,"haze-gray-steel", "#9ba5a7");
+  const light = createDestroyerUpperworksPaint(scene,"upperworks-gray", "#afb7b7");
   const deck = paint("non-skid-deck", "#ffffff", .95);
   deck.albedoTexture = createDeckSurfaceTexture(scene);
   const dark = paint("exhaust-and-fittings", "#262e33");
   const exhaustBlack = paint("soot-black", "#111719", .95);
-  const radar = paint("spy-1-array-faces", "#64757d", .65);
+  const radar = paint("fittings-gray", "#66767b", .8);
+  const arrayPaint = paint("spy-1-array-faces", "#acb5b4", .9, .03);
   const glass = paint("bridge-glazing", "#163740", .18, .4);
   const white = paint("deck-markings", "#d6d9d2");
   const safetyOrange = paint("safety-equipment-orange", "#dc5836", .72);
@@ -88,12 +96,38 @@ export function createDestroyer(scene: Scene): DestroyerVisual {
   };
 
   // Flared bow, fine entry, parallel midbody, and a broad transom.
-  const stations = [
+  const controlStations = [
     [-77.645,6.9,4.9,4.3], [-70,7.8,6.1,4.35], [-60,8.55,6.6,4.4],
     [-42,9,7,4.5], [-22,9,7,4.7], [0,9,7,5.0], [16,8.85,6.8,5.2],
     [30,8.6,6.3,5.5], [42,7.85,5.3,5.85], [52,6.55,4.1,6.15],
     [60,5.2,2.9,6.5], [68,3.6,1.55,6.85], [73,1.9,.6,7.18], [77.645,.04,.02,7.5],
   ];
+  // Monotone Hermite stations preserve the fine entry without visible straight-sided kinks.
+  const stationSlope=(i:number,c:number)=>{
+    const a=controlStations[Math.max(0,i-1)],b=controlStations[i],d=controlStations[Math.min(controlStations.length-1,i+1)];
+    if(i===0)return (d[c]-b[c])/(d[0]-b[0]);
+    if(i===controlStations.length-1)return (b[c]-a[c])/(b[0]-a[0]);
+    const left=(b[c]-a[c])/(b[0]-a[0]),right=(d[c]-b[c])/(d[0]-b[0]);
+    if(left*right<=0)return 0;
+    const h0=b[0]-a[0],h1=d[0]-b[0],w0=2*h1+h0,w1=h1+2*h0;
+    return (w0+w1)/(w0/left+w1/right);
+  };
+  const stations:number[][]=[];
+  for(let i=0;i<controlStations.length-1;i++) {
+    const a=controlStations[i],b=controlStations[i+1],span=b[0]-a[0],count=Math.ceil(span/2.5);
+    for(let j=0;j<count;j++) {
+      const t=j/count,t2=t*t,t3=t2*t,station=[a[0]+span*t];
+      for(let c=1;c<=3;c++)station.push((2*t3-3*t2+1)*a[c]+(t3-2*t2+t)*span*stationSlope(i,c)+(-2*t3+3*t2)*b[c]+(t3-t2)*span*stationSlope(i+1,c));
+      stations.push(station);
+    }
+  }
+  stations.push(controlStations[controlStations.length-1]);
+  const hullRing=(s:number[])=>{
+    const [z,b,lower,sheer]=s,rake=Math.max(0,(z-42)/(77.645-42));
+    return [[-lower,-6.4,z-rake*8.4],[lower,-6.4,z-rake*8.4],
+      [b*.69,-3.0,z-rake*6.2],[b*.85,-.3,z-rake*4.4],[b*.95,sheer*.49,z-rake*2.1],[b,sheer,z],
+      [-b,sheer,z],[-b*.95,sheer*.49,z-rake*2.1],[-b*.85,-.3,z-rake*4.4],[-b*.69,-3,z-rake*6.2]];
+  };
   const stationValue=(z:number,column:number)=>{
     for(let i=1;i<stations.length;i++)if(z<=stations[i][0]){
       const a=stations[i-1],b=stations[i],t=(z-a[0])/(b[0]-a[0]);return a[column]+(b[column]-a[column])*t;
@@ -102,11 +136,9 @@ export function createDestroyer(scene: Scene): DestroyerVisual {
   const deckHeight=(z:number)=>stationValue(z,3)+.035;
   // Intersect the actual flared hull triangles, rather than its maximum beam.
   const hullSurface=(side:number,y:number,z:number):MountSurface=>{
-    const water=(s:number[])=>[s[1]*.84,-.5,s[0]-Math.max(0,(s[0]-42)/(77.645-42))*7.6];
-    const top=(s:number[])=>[s[1],s[3],s[0]];
-    for(let i=1;i<stations.length;i++)for(const triangle of [
-      [water(stations[i-1]),water(stations[i]),top(stations[i-1])],
-      [top(stations[i-1]),water(stations[i]),top(stations[i])],
+    for(let i=1;i<stations.length;i++)for(const e of [3,4])for(const triangle of [
+      [hullRing(stations[i-1])[e],hullRing(stations[i])[e],hullRing(stations[i-1])[e+1]],
+      [hullRing(stations[i-1])[e+1],hullRing(stations[i])[e],hullRing(stations[i])[e+1]],
     ]){
       const [a,b,c]=triangle,by=b[1]-a[1],bz=b[2]-a[2],cy=c[1]-a[1],cz=c[2]-a[2];
       const det=by*cz-bz*cy,u=((y-a[1])*cz-(z-a[2])*cy)/det,v=(by*(z-a[2])-bz*(y-a[1]))/det;
@@ -123,32 +155,17 @@ export function createDestroyer(scene: Scene): DestroyerVisual {
   const wallBox=(name:string,h:number,d:number,side:number,y:number,z:number,layout:DeckhouseLayout,material=gray,thickness=.12,offset=0)=>
     seatSurfaceBox(box(name,thickness,h,d,0,0,0,material),sideSurface(layout,side,y,z),thickness,offset);
   const positions: number[] = [], indices: number[] = [];
-  for (const [z, beam, lower, sheer] of stations as [number,number,number,number][]) {
-    // Raked stem: the deck projects ahead of the waterline, instead of a
-    // vertical triangular wall. The lower entry is fine below the bow flare.
-    const rake=Math.max(0,(z-42)/(77.645-42));
-    positions.push(-lower,-6.4,z-rake*12.4, lower,-6.4,z-rake*12.4,
-      beam*.84,-.5,z-rake*7.6, beam,sheer,z, -beam,sheer,z, -beam*.84,-.5,z-rake*7.6);
-  }
-  for (let s = 0; s < stations.length-1; s++) for (let e=0;e<6;e++) {
-    const a=s*6+e,b=s*6+(e+1)%6,c=b+6,d=a+6;
+  const sectionSize=10;
+  for(const station of stations)for(const p of hullRing(station))positions.push(...p);
+  for(let s=0;s<stations.length-1;s++)for(let e=0;e<sectionSize;e++) {
+    const a=s*sectionSize+e,b=s*sectionSize+(e+1)%sectionSize,c=b+sectionSize,d=a+sectionSize;
     indices.push(a,d,b,b,d,c);
   }
-  for (const s of [0,stations.length-1]) for(let i=1;i<5;i++) {
-    const b=s*6;
-    if(s===0) indices.push(b,b+i,b+i+1); else indices.push(b,b+i+1,b+i);
+  for(const s of [0,stations.length-1])for(let i=1;i<sectionSize-1;i++) {
+    const b=s*sectionSize;
+    if(s===0)indices.push(b,b+i,b+i+1);else indices.push(b,b+i+1,b+i);
   }
-  const hullPaint = paint("weathered-hull-steel", "#ffffff", .84);
-  const hullTexture = new DynamicTexture("hull-plating-and-streaks", {width:2048,height:256}, scene, true);
-  const hc = hullTexture.getContext(); hc.fillStyle = "#909b9f"; hc.fillRect(0,0,2048,256);
-  hc.fillStyle = "#353d40"; hc.fillRect(0,150,2048,5);
-  hc.strokeStyle="rgba(54,67,71,.15)"; hc.lineWidth=1;
-  for(let x=0;x<2048;x+=80){hc.beginPath();hc.moveTo(x,12);hc.lineTo(x,143);hc.stroke();}
-  for(let y=45;y<140;y+=35){hc.beginPath();hc.moveTo(0,y);hc.lineTo(2048,y);hc.stroke();}
-  for(let i=0;i<70;i++){const x=(i*379)%2048;const streak=hc.createLinearGradient(x,18,x,75);
-    streak.addColorStop(0,"rgba(80,67,50,.19)");streak.addColorStop(1,"rgba(80,67,50,0)");
-    hc.fillStyle=streak;hc.fillRect(x,18,2+i%3,57);}
-  hullTexture.update(); hullPaint.albedoTexture=hullTexture;
+  const hullPaint = createDestroyerHullPaint(scene);
   const hull = register(makeMesh("flared-displacement-hull", positions, indices, scene), hullPaint);
   const hullPositions=hull.getVerticesData("position")!;
   hull.setVerticesData("uv",Array.from({length:hullPositions.length/3},(_,i)=>[
@@ -184,8 +201,8 @@ export function createDestroyer(scene: Scene): DestroyerVisual {
     const z=layout.z+end*(layout.depth/2-layout.chamfer/2-inset);
     const surface=sideSurface(layout,side,y,z);
     // The complete octagon fits inside the chamfer; the back is seated in it.
-    seatSurfaceCylinder(register(CreateCylinder("SPY1-octagonal-array-frame",{diameter:4.6,height:.16,tessellation:8},scene),gray),surface,.16);
-    seatSurfaceCylinder(register(CreateCylinder("SPY1-octagonal-array-face",{diameter:4.34,height:.09,tessellation:8},scene),radar),surface,.09,.14);
+    seatSurfaceCylinder(register(CreateCylinder("SPY1-octagonal-array-frame",{diameter:5.20,height:.16,tessellation:8},scene),gray),surface,.16);
+    seatSurfaceCylinder(register(CreateCylinder("SPY1-octagonal-array-face",{diameter:5.02,height:.09,tessellation:8},scene),arrayPaint),surface,.09,.14);
   }
   house("twin-helicopter-hangar",DESTROYER_HOUSES.hangar);
   house("aft-uptake-working-deck",DESTROYER_HOUSES.aft);
@@ -222,15 +239,10 @@ export function createDestroyer(scene: Scene): DestroyerVisual {
       for(let y=6.15;y<9;y+=.42) tube("deckhouse-ladder-rung",[p(y,z),p(y,z+1.05)],.045,light);
       for(const y of [6,9]) for(const dz of [0,1.05]) tube("ladder-wall-standoff",[sideSurface(layout,side,y,z+dz).point.asArray(),p(y,z+dz)],.05,gray);
     }
-    for(const z of [-58,-43,-27,-10,8,25,43,59]) {
+    for(const z of [-58,-30,12]) {
       const door=hullSurface(side,2.55,z);
-      seatSurfaceBox(box("hull-service-door",.1,1.45,1,0,0,0,dark),door,.1);
-      seatSurfaceBox(box("hull-service-door-panel",.13,1.08,.72,0,0,0,gray),door,.13,.075);
-      seatSurfaceBox(box("hull-porthole",.11,.48,.7,0,0,0,glass),hullSurface(side,4.1,z+2.2),.11);
-      const ringZ=z-2.5, surface=hullSurface(side,deckHeight(ringZ)-.72,ringZ);
-      const ring=register(CreateTorus("life-ring",{diameter:1.05,thickness:.19,tessellation:12},scene),safetyOrange);
-      seatSurfaceCylinder(ring,surface,.19,.03);
-      tube("life-ring-mount",[surface.point.asArray(),surface.point.add(surface.normal.scale(.15)).asArray()],.1,gray);
+      seatSurfaceBox(box("hull-service-door",.075,1.10,.78,0,0,0,radar),door,.075);
+      seatSurfaceBox(box("hull-service-door-panel",.08,.93,.64,0,0,0,gray),door,.08,.06);
     }
     for(const z of [-64,-48,-32,-16,0,16,32,48,64])
       seatSurfaceBox(box("deck-drainage-scupper",.1,.24,.55,0,0,0,radar),hullSurface(side,deckHeight(z)-.32,z),.1);
@@ -258,58 +270,63 @@ export function createDestroyer(scene: Scene): DestroyerVisual {
     wallBox("hangar-corner-fender",5.9,.34,side,7.65,-25,layout,radar,.32);
     for(let z=-42;z<=-26;z+=4)box("hangar-roof-tie-down",.18,.1,.18,side*6.3,HANGAR_ROOF_Y+.035,z,light);
   }
-  // Two separate gas-turbine uptake groups, with paired black exhausts.
-  for(const z of [4,-21]) {
-    const baseY=roofHeight(z>0?DESTROYER_HOUSES.forward:DESTROYER_HOUSES.aft), topY=baseY+7.3;
-    const layout={width:9.8,depth:9.2,height:7.3,chamfer:1.3,inset:.8,y:baseY,z};
-    register(createFacetedDeckhouse("raked-uptake-group",9.8,9.2,7.3,1.3,.8,scene),light).position.set(0,baseY,z);
-    box("funnel-cap",8.2,.32,7.6,0,topY+.16,z,light);
+  // Separate raked gas-turbine uptake houses with exposed paired black stacks.
+  for(const z of [4,-20]) {
+    const baseY=roofHeight(z>0?DESTROYER_HOUSES.forward:DESTROYER_HOUSES.aft), topY=baseY+6.7;
+    const layout={width:9.8,depth:9.2,height:6.7,chamfer:1.3,inset:.8,y:baseY,z};
+    register(createFacetedDeckhouse("raked-uptake-group",9.8,9.2,6.7,1.3,.8,scene),light).position.set(0,baseY,z);
+    box("funnel-cap",8.25,.22,7.65,0,topY+.11,z,gray);
     for(const side of [-1,1]) {
-      cylinder("turbine-exhaust-rim",2.65,.22,side*2.05,topY+.37,z,dark);
-      cylinder("turbine-exhaust",2.2,.14,side*2.05,topY+.41,z,exhaustBlack,2.2,24);
-      for(let y=baseY+1.1;y<topY-1.0;y+=.38) wallBox("funnel-side-louver",.13,4.5,side,y,z,layout,radar,.14);
+      const sx=side*2.15;
+      cylinder("turbine-stack-seat",2.7,.26,sx,topY+.29,z,gray);
+      cylinder("turbine-stack-black-sleeve",2.35,1.55,sx,topY+1.16,z,exhaustBlack,2.38,32);
+      for(const h of [.47,.79,1.15,1.57,1.93]) cylinder("turbine-stack-flange",2.52,.075,sx,topY+h,z,dark,2.52,32);
+      // Recessed open mouth: the inner bore remains dark rather than a gray cap.
+      cylinder("turbine-exhaust-mouth",2.16,.045,sx,topY+1.98,z,exhaustBlack,2.16,32);
+      for(const dz of [-2.05,1.7]) {
+        wallBox("funnel-intake-dark-recess",2.4,2.85,side,baseY+2.6,z+dz,layout,dark,.08);
+        for(let y=baseY+1.54;y<=baseY+3.68;y+=.27)
+          wallBox("funnel-intake-horizontal-slat",.10,2.63,side,y,z+dz,layout,gray,.12,.075);
+      }
+      for(const dz of [-2.6,0,2.6]) wallBox("funnel-upper-exhaust-service-panel",1.75,1.12,side,baseY+5.15,z+dz,layout,radar,.06);
+      const surface=(y:number,dz:number)=>sideSurface(layout,side,y,z+dz).point.add(sideSurface(layout,side,y,z+dz).normal.scale(.1)).asArray();
+      for(const dz of [-3.55,-3.0])tube("funnel-service-ladder",[surface(baseY+.6,dz),surface(topY+.1,dz)],.035,light);
+      for(let y=baseY+.8;y<topY;y+=.36)tube("funnel-ladder-rung",[surface(y,-3.55),surface(y,-3)],.025,light);
     }
-    cylinder("auxiliary-uptake-rim",1.65,.15,0,topY+.35,z+2.1,gray,1.65,20);
-    cylinder("auxiliary-uptake-opening",1.35,.17,0,topY+.38,z+2.1,exhaustBlack,1.35,20);
-    box("funnel-service-platform",10.6,.2,10.2,0,baseY+.2,z,deck);
+    cylinder("auxiliary-uptake-rim",1.45,.38,0,topY+.38,z+2.35,dark,1.45,20);
+    cylinder("auxiliary-uptake-opening",1.21,.08,0,topY+.61,z+2.35,exhaustBlack,1.21,20);
+    box("funnel-service-platform",10.6,.18,10.2,0,baseY+.14,z,deck);
     for(const side of [-1,1]) {
-      tube("funnel-guardrail",[[side*5.1,baseY+1.35,z-4.6],[side*5.1,baseY+1.35,z+4.6]],.04,light);
-      for(let dz=-4.6;dz<=4.6;dz+=1.53) tube("funnel-guardrail-post",[[side*5.1,baseY+.3,z+dz],[side*5.1,baseY+1.4,z+dz]],.035,light);
+      tube("funnel-guardrail",[[side*5.1,baseY+1.3,z-4.6],[side*5.1,baseY+1.3,z+4.6]],.032,light);
+      for(let dz=-4.6;dz<=4.6;dz+=1.53) tube("funnel-guardrail-post",[[side*5.1,baseY+.24,z+dz],[side*5.1,baseY+1.35,z+dz]],.032,light);
     }
   }
   // Aft 64-cell Mk 41 launch deck grid. The forward bank is detailed separately.
+  const aftMissileLaunchCells: VlsLaunchCell[] = [];
   const vls=(z:number,rows:number,y:number)=>{
     box("Mk41-launcher-coaming",7.35,.42,rows*1.3+.55,0,y,z,dark);
     for(let row=0;row<rows;row++) for(let col=0;col<8;col++) {
       const x=(col-3.5)*.86,cellZ=z+(row-(rows-1)/2)*1.3;
-      box("VLS-cell-hatch-rim",.79,.13,1.18,x,y+.26,cellZ,radar);
-      box("VLS-cell-hatch",.62,.1,1.0,x,y+.35,cellZ,light);
-      box("VLS-hatch-lifting-point",.11,.08,.26,x,y+.42,cellZ-.32,dark);
+      for(const side of [-1,1]) {
+        box("VLS-cell-hatch-rim-side",.085,.13,1.18,x+side*.3525,y+.26,cellZ,radar);
+        box("VLS-cell-hatch-rim-end",.62,.13,.09,x,y+.26,cellZ+side*.545,radar);
+        box("VLS-hatch-hinge",.13,.07,.09,x+side*.18,y+.35,cellZ-.5,dark);
+      }
+      aftMissileLaunchCells.push(createVlsLaunchCell(scene,root,casters,{
+        bank:"aft",index:row*8+col,x,y:y+.35,z:cellZ,width:.62,depth:1,thickness:.1,
+      },{gray,light,dark}));
     }
   };
   vls(-30,8,12.05);
 
-  box("mast-deck-foundation",3.9,.28,3.9,0,MAST_FOOT_Y+.10,20,gray);
-  tapered("main-mast-base",3.6,3.6,31.9-MAST_FOOT_Y,1.15,0,MAST_FOOT_Y+.12,20,gray);
-  cylinder("mast-pole",.55,10,0,36.7,20,gray,.22);
-  box("mast-crossarm",11,.35,.65,0,31,20,gray);
-  for(const side of [-1,1]) tube("mast-brace",[[0,25,20],[side*5.3,31,20]],.13);
-  const scanner = box("rotating-search-radar",6.8,1.1,1.2,0,38.3,20,dark);
-  box("mast-platform-upper",11,.28,4.4,0,33,20,deck);
-  box("mast-signal-yard",9,.25,.32,0,34.7,20,gray);
-  for(const side of [-1,1]) {
-    tube("mast-lattice-leg",[[side*1.55,MAST_FOOT_Y+.12,18.5],[side*.55,36.5,20]],.12,light);
-    tube("mast-lattice-crossbrace",[[side*1.45,27,19],[0,30,19.5],[side*.85,33,20]],.075,gray);
-    tube("mast-antenna-yardarm",[[side*2.2,35.68,20],[side*4.8,35.68,20]],.08,light);
-    for(const z of [15,-12.6,-35.5]) {
-      const x=side*(z===-12.6?3.6:5.7), roof=z>0?roofHeight(DESTROYER_HOUSES.forward):z>-25?roofHeight(DESTROYER_HOUSES.aft):HANGAR_ROOF_Y;
-      cylinder("tactical-communications-platform",2.5,.38,x,roof+.18,z,radar,2.5,16);
-      cylinder("radome-mount-neck",.72,.48,x,roof+.57,z,gray);
-      const ball=register(CreateSphere("satcom-radome",{diameter:1.8,segments:12},scene),white);
-      ball.position.set(x,roof+1.6,z);
-    }
+  const scanner=addDestroyerMast(scene,root,casters,{gray,light,deck,dark,radar,glass,white,orange:safetyOrange});
+  for(const side of [-1,1]) for(const z of [15,-12.6,-35.5]) {
+    const x=side*(z===-12.6?3.6:5.7), roof=z>0?roofHeight(DESTROYER_HOUSES.forward):z>-25?roofHeight(DESTROYER_HOUSES.aft):HANGAR_ROOF_Y;
+    cylinder("tactical-communications-platform",2.5,.28,x,roof+.14,z,radar,2.5,16);
+    cylinder("radome-mount-neck",.72,.48,x,roof+.51,z,gray);
+    const ball=register(CreateSphere("satcom-radome",{diameter:1.8,segments:16},scene),white);
+    ball.position.set(x,roof+1.5,z);
   }
-  for(const x of [-4.7,4.7]) cylinder("mast-whip-antenna",.1,4.5,x,33.2,20,dark);
   for(const [x,z] of [[-5,13],[5,13],[-5,-39],[5,-39]]) {
     const roof=z>0?roofHeight(DESTROYER_HOUSES.forward):HANGAR_ROOF_Y;
     cylinder("satcom-pedestal",1.1,1.7,x,roof+.83,z);
@@ -324,25 +341,15 @@ export function createDestroyer(scene: Scene): DestroyerVisual {
     gun.rotation.x=Math.PI/2;
   }
   for(const side of [-1,1]) {
-    // Recessed ship's boat and its davit amidships.
-    tapered("RHIB",1.9,7,.9,.3,side*7,6.8,-6,dark);
-    cylinder("boat-davit-foot",.65,.35,side*6,BOAT_DECK_Y+.16,-4,gray);
-    tube("boat-davit",[[side*6,BOAT_DECK_Y,-4],[side*6,10,-4],[side*7,10,-4]],.16);
-    tube("boat-davit-brace",[[side*6,8.6,-4],[side*7,10,-4]],.11,gray);
-    tube("boat-hoist-cable",[[side*7,10,-4],[side*7,7.5,-4]],.025,dark);
-    for(const z of [-8,-4]) {
-      const h=6.8-BOAT_DECK_Y;
-      box("RHIB-cradle-leg",.22,h,1.25,side*7,BOAT_DECK_Y+h/2,z,gray);
-      box("RHIB-cradle-saddle",1.75,.2,.45,side*7,6.78,z,radar);
-    }
     for(const z of [-67,-54,47,66]) {
       const x=side*(stationValue(z,1)-1.3);
       cylinder("bollard",.45,.85,x,deckHeight(z)+.415,z,dark);
     }
-    for(const [z,beam,,sheer] of stations.slice(0,-1) as [number,number,number,number][]) {
-      tube("lifeline-stanchion",[[side*(beam-.2),sheer,z],[side*(beam-.2),sheer+1.15,z]],.045,light);
+    for(let z=-47;z<=34;z+=1.8) {
+      const y=deckHeight(z),x=side*(stationValue(z,1)-.2);
+      tube("lifeline-stanchion",[[x,y,z],[x,y+1.12,z]],.032,light);
     }
-    for(const height of [.55,1.15]) tube("deck-edge-lifeline",(stations as [number,number,number,number][]).map(([z,b,,y])=>[side*(b-.15),y+height,z]),.025,light);
+    for(const height of [.55,1.15]) tube("deck-edge-lifeline",([[-47,stationValue(-47,1),0,stationValue(-47,3)],...stations.filter(s=>s[0]>=-42)] as [number,number,number,number][]).map(([z,b,,y])=>[side*(b-.15),y+height,z]),.025,light);
     const nav=paint(side<0?"port-red":"starboard-green",side<0?"#dd3024":"#35d87b");
     nav.emissiveColor=Color3.FromHexString(side<0?"#aa160c":"#0d8e38");
     box("navigation-light",.3,.35,.4,side*8.65,18.35,30,nav);
@@ -350,53 +357,30 @@ export function createDestroyer(scene: Scene): DestroyerVisual {
     tube("propeller-shaft",[[side*3.7,-3.8,-52],[side*3.7,-4.2,-70]],.27,dark);
 
   }
-  // Painted flight deck, inset clear of the hangars and transom.
-  const flightTexture=new DynamicTexture("flight-deck-markings",{width:512,height:1024},scene,true);
-  const ctx=flightTexture.getContext();
-  ctx.fillStyle="#626a6c";ctx.fillRect(0,0,512,1024);
-  let deckSeed=912;for(let i=0;i<18000;i++){deckSeed=deckSeed*16807%2147483647;const x=deckSeed/2147483647*512;deckSeed=deckSeed*16807%2147483647;const y=deckSeed/2147483647*1024;ctx.fillStyle=i%2?"rgba(26,33,34,.11)":"rgba(184,190,188,.12)";ctx.fillRect(x,y,1.5,1.5);}
-  ctx.strokeStyle="#d6d9d2";ctx.lineWidth=8;
-  ctx.strokeRect(35,35,442,954);
-  ctx.strokeStyle="#dedbcb";ctx.lineWidth=12;
-  ctx.beginPath();ctx.moveTo(65,75);ctx.lineTo(445,940);ctx.moveTo(445,75);ctx.lineTo(65,940);ctx.stroke();
-  ctx.strokeStyle="#d6d9d2";ctx.lineWidth=7;
-  ctx.beginPath();
-  for(let i=0;i<=64;i++){const a=i/64*Math.PI*2;const x=256+Math.cos(a)*166,y=560+Math.sin(a)*235;if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);}
-  ctx.stroke();
-  ctx.beginPath();ctx.moveTo(256,35);ctx.lineTo(256,989);ctx.stroke();
-  ctx.fillStyle="#d6d9d2";ctx.font="bold 74px sans-serif";ctx.fillText("96",209,610);
-  ctx.fillStyle="#303a3d";for(let x=65;x<480;x+=44)for(let y=90;y<960;y+=48){ctx.beginPath();ctx.arc(x,y,3,0,Math.PI*2);ctx.fill();}
-  ctx.strokeStyle="#c6b483";ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(55,55);ctx.lineTo(457,55);ctx.stroke();
-  flightTexture.update();
-  const flightMaterial=paint("flight-deck", "#ffffff",.95);flightMaterial.albedoTexture=flightTexture;
-  const flight=register(CreatePlane("empty-flight-deck-markings",{width:12.5,height:28,sideOrientation:Mesh.DOUBLESIDE},scene),flightMaterial);
-  flight.rotation.x=Math.PI/2;flight.position.set(0,4.47,-62);
-  const lettering=new DynamicTexture("hull-number",{width:256,height:128},scene,true);
-  lettering.hasAlpha=true;lettering.drawText("96",null,102,"bold 110px sans-serif","#e6e8e3","transparent",true);
+  addDestroyerFlightDeck(scene,root,casters,{gray,light,deck,dark,radar,glass,white,orange:safetyOrange},deckHeight,z=>stationValue(z,1));
+  const lettering=new DynamicTexture("hull-number",{width:512,height:256},scene,true);
+  lettering.hasAlpha=true;
+  const lc=lettering.getContext() as CanvasRenderingContext2D;lc.clearRect(0,0,512,256);lc.font="bold 214px Arial";lc.textAlign="center";
+  lc.translate(256,0);lc.scale(1.8,1);lc.lineWidth=9;lc.strokeStyle="#3c494c";lc.strokeText("96",0,205);lc.fillStyle="#d0d4cf";lc.fillText("96",0,205);lettering.update();
   const number=paint("hull-number-paint","#ffffff");number.albedoTexture=lettering;number.useAlphaFromAlbedoTexture=true;
   for(const side of [-1,1]) {
-    const plate=register(CreatePlane("bow-hull-number",{width:4.4,height:2.2,sideOrientation:Mesh.DOUBLESIDE},scene),number);
-    const surface=hullSurface(side,3.4,48), up=Vector3.Up().subtract(surface.normal.scale(surface.normal.y)).normalize(), inward=surface.normal.negate();
+    const plate=register(CreatePlane("bow-hull-number",{width:5.7,height:2.85,sideOrientation:Mesh.DOUBLESIDE},scene),number);
+    const surface=hullSurface(side,4.05,57), up=Vector3.Up().subtract(surface.normal.scale(surface.normal.y)).normalize(), inward=surface.normal.negate();
     plate.rotationQuaternion=Quaternion.RotationQuaternionFromAxis(Vector3.Cross(up,inward).normalize(),up,inward);
     plate.position.copyFrom(surface.point.add(surface.normal.scale(.02)));
   }
 
   addDestroyerHouseFront(scene,root,casters,{gray,light,deck,dark,radar,glass,white,orange:safetyOrange},deckHeight);
   const foredeckGun: ForedeckGunControls = addDestroyerForedeck(scene,root,casters,{gray,light,dark,radar,white,orange:safetyOrange,red:deckRed,green:capstanGreen},deckHeight,z=>stationValue(z,1));
+  addDestroyerReferenceFittings(scene,root,casters,{gray,light,deck,dark,radar,glass,white,orange:safetyOrange},deckHeight);
   const details=addDestroyerDetails(scene,root,casters,{gray,light,deck,dark,radar,glass,white,orange:safetyOrange},deckHeight,z=>stationValue(z,1),hullSurface);
-  const animatedParts=new Set([scanner,...details.animated,...foredeckGun.animatedMeshes]);
-  // Material batching keeps the detailed vessel to a small number of draw calls.
-  for(const material of new Set(casters.filter(m=>!animatedParts.has(m)).map(m=>m.material))) {
-    const parts=casters.filter(m=>!animatedParts.has(m)&&m.material===material);
-    if(parts.length<2) continue;
-    const merged=Mesh.MergeMeshes(parts,true,true);
-    if(merged){merged.parent=root;merged.receiveShadows=true;merged.isPickable=false;
-      for(const part of parts) casters.splice(casters.indexOf(part),1);
-      casters.push(merged);
-    }
-  }
+  const missileLaunchCells=[...foredeckGun.missileLaunchCells,...aftMissileLaunchCells];
+  const animatedParts=new Set([scanner,...details.animated,...foredeckGun.animatedMeshes,
+    ...missileLaunchCells.flatMap(cell=>cell.hatchMeshes)]);
+  // Preserve each vertex layout while batching static fittings by material.
+  mergeStaticMeshes(root, casters, animatedParts);
   let previousTime=0;
-  return {root,shadowCasters:casters,gunCameraMount:foredeckGun.cameraMount,update(state,interpolation){
+  return {root,shadowCasters:casters,gunCameraMount:foredeckGun.cameraMount,missileLaunchCells,update(state,interpolation){
     const t=Math.max(0,Math.min(1,interpolation));
     const lerp=(a:number,b:number)=>a+(b-a)*t;
     root.position.set(lerp(state.previousPositionX,state.positionX),lerp(state.previousPositionY,state.positionY),lerp(state.previousPositionZ,state.positionZ));

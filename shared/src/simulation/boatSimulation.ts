@@ -1,4 +1,5 @@
-import { OCEAN_WAVES } from "../oceanWaves.js";
+import { sampleOceanSurface, type OceanSurfaceSample } from "../oceanWaves.js";
+import { resolveIslandHullMotion } from "../world/islandCollision.js";
 
 export const FIXED_SIMULATION_STEP = 1 / 60;
 
@@ -16,6 +17,7 @@ export const BOAT_SIMULATION_CONFIG = Object.freeze({
   waterDensityKgPerCubicMeter: 1025,
   addedSurgeMassFraction: 0.08,
   addedSwayMassFraction: 0.45,
+  addedHeaveMassFraction: 0.35,
   yawInertiaKgMetersSquared: 31_000_000_000,
   rudderAreaSquareMeters: 12,
   rudderLiftSlope: 2.1,
@@ -76,7 +78,34 @@ const WATERPLANE_STATIONS = [
   [22, 7.8], [43, 5.8], [64, 2.4],
 ] as const;
 
+// Quadrature and least-squares waterplane moments depend only on the hull.
+// Precompute them once, including the asymmetric bow/stern buoyancy centroid.
+const WATERPLANE_PROBES = (() => {
+  const probes: { x: number; z: number; weight: number; pitchWeight: number; rollWeight: number }[] = [];
+  let totalWeight = 0, sumZ = 0, sumZZ = 0, sumXX = 0;
+  for (const [z, halfBeam] of WATERPLANE_STATIONS) {
+    for (const fraction of [-0.75, 0, 0.75]) {
+      const x = halfBeam * fraction, weight = halfBeam * (fraction === 0 ? 2 : 1);
+      probes.push({ x, z, weight, pitchWeight: 0, rollWeight: 0 });
+      totalWeight += weight;
+      sumZ += weight * z;
+      sumZZ += weight * z * z;
+      sumXX += weight * x * x;
+    }
+  }
+  const centroidZ = sumZ / totalWeight;
+  const pitchMoment = sumZZ - sumZ * centroidZ;
+  for (const probe of probes) {
+    probe.pitchWeight = probe.weight * (probe.z - centroidZ) / pitchMoment;
+    probe.rollWeight = probe.weight * probe.x / sumXX;
+    probe.weight /= totalWeight;
+    Object.freeze(probe);
+  }
+  return Object.freeze(probes);
+})();
+
 export class BoatSimulation {
+  private readonly oceanSample: OceanSurfaceSample = { height: 0, slopeX: 0, slopeZ: 0, verticalVelocity: 0 };
   readonly state: BoatSimulationState = {
     positionX: 0, positionY: BOAT_SIMULATION_CONFIG.waterlineOffsetMeters, positionZ: 0,
     previousPositionX: 0, previousPositionY: BOAT_SIMULATION_CONFIG.waterlineOffsetMeters, previousPositionZ: 0,
@@ -141,11 +170,23 @@ export class BoatSimulation {
     // the existing world velocity. The hull develops sideslip through a turn.
     state.velocityX = forwardX * nextSurge + rightX * nextSway;
     state.velocityZ = forwardZ * nextSurge + rightZ * nextSway;
+    const motion = resolveIslandHullMotion(
+      { x: state.previousPositionX, z: state.previousPositionZ, heading: state.previousHeading },
+      { x: state.positionX + state.velocityX * dt, z: state.positionZ + state.velocityZ * dt, heading: state.heading },
+      { x: state.velocityX, z: state.velocityZ },
+      { length: config.hullLengthMeters, beam: config.hullBeamMeters },
+    );
+    state.positionX = motion.pose.x;
+    state.positionZ = motion.pose.z;
+    state.heading = motion.pose.heading;
+    state.previousPositionX = motion.previousPose.x;
+    state.previousPositionZ = motion.previousPose.z;
+    state.velocityX = motion.velocity.x;
+    state.velocityZ = motion.velocity.z;
+    if (motion.rotationBlocked) state.yawRate = 0;
     state.speed = Math.hypot(state.velocityX, state.velocityZ);
     state.forwardSpeed = state.velocityX * Math.sin(state.heading) + state.velocityZ * Math.cos(state.heading);
-    state.positionX += state.velocityX * dt;
-    state.positionZ += state.velocityZ * dt;
-    state.distanceTraveledMeters += state.speed * dt;
+    state.distanceTraveledMeters += motion.distance;
     this.updateBuoyancy(dt, state.elapsedTime + dt);
     state.elapsedTime += dt;
   }
@@ -153,43 +194,39 @@ export class BoatSimulation {
   private updateBuoyancy(dt: number, time: number): void {
     const state = this.state, config = BOAT_SIMULATION_CONFIG;
     const forwardX = Math.sin(state.heading), forwardZ = Math.cos(state.heading);
-    let totalWeight = 0, heave = 0, waterVelocity = 0;
-    let sumZ = 0, sumZZ = 0, sumZH = 0, sumXX = 0, sumXH = 0;
-    for (const [localZ, halfBeam] of WATERPLANE_STATIONS) {
-      for (const fraction of [-0.75, 0, 0.75]) {
-        const localX = halfBeam * fraction;
-        const weight = halfBeam * (fraction === 0 ? 2 : 1);
-        const worldX = state.positionX + forwardX * localZ + forwardZ * localX;
-        const worldZ = state.positionZ + forwardZ * localZ - forwardX * localX;
-        let height = 0, velocity = 0;
-        for (const wave of OCEAN_WAVES) {
-          const k = Math.PI * 2 / wave.wavelength;
-          const phase = k * (wave.directionX * worldX + wave.directionZ * worldZ) - wave.angularFrequency * time + wave.phase;
-          height += wave.amplitude * Math.sin(phase);
-          // Encounter velocity includes passage through the fixed world waves.
-          velocity += wave.amplitude * Math.cos(phase) *
-            (k * (wave.directionX * state.velocityX + wave.directionZ * state.velocityZ) - wave.angularFrequency);
-        }
-        totalWeight += weight;
-        heave += weight * height;
-        waterVelocity += weight * velocity;
-        sumZ += weight * localZ; sumZZ += weight * localZ * localZ;
-        sumZH += weight * localZ * height;
-        sumXX += weight * localX * localX; sumXH += weight * localX * height;
-      }
+    let meanHeight = 0, waterVelocity = 0, pitchSlope = 0, rollSlope = 0;
+    let pitchSlopeVelocity = 0, rollSlopeVelocity = 0;
+    for (let index = 0; index < WATERPLANE_PROBES.length; index++) {
+      const probe = WATERPLANE_PROBES[index];
+      const offsetX = forwardX * probe.z + forwardZ * probe.x;
+      const offsetZ = forwardZ * probe.z - forwardX * probe.x;
+      // Rotating hull probes encounter water at their own velocity, including yaw.
+      const sample = sampleOceanSurface(state.positionX + offsetX, state.positionZ + offsetZ, time,
+        this.oceanSample, state.velocityX + state.yawRate * offsetZ, state.velocityZ - state.yawRate * offsetX);
+      meanHeight += probe.weight * sample.height;
+      waterVelocity += probe.weight * sample.verticalVelocity;
+      pitchSlope += probe.pitchWeight * sample.height;
+      rollSlope += probe.rollWeight * sample.height;
+      pitchSlopeVelocity += probe.pitchWeight * sample.verticalVelocity;
+      rollSlopeVelocity += probe.rollWeight * sample.verticalVelocity;
     }
-    const meanHeight = heave / totalWeight;
-    const pitchSlope = (sumZH - sumZ * meanHeight) / (sumZZ - sumZ * sumZ / totalWeight);
     const targetHeave = meanHeight + config.waterlineOffsetMeters;
-    const verticalAcceleration = (targetHeave - state.positionY) * config.buoyancyStiffnessNewtonsPerMeter / config.massKg -
-      (state.verticalVelocity - waterVelocity / totalWeight * 0.45) * config.verticalDampingNewtonsPerMps / config.massKg;
+    const effectiveHeaveMass = config.massKg * (1 + config.addedHeaveMassFraction);
+    // Linearized hydrostatic restoring force plus damping relative to the water.
+    // Spatial averaging lets a long, heavy hull bridge short waves without jitter.
+    const verticalAcceleration = ((targetHeave - state.positionY) * config.buoyancyStiffnessNewtonsPerMeter -
+      (state.verticalVelocity - waterVelocity) * config.verticalDampingNewtonsPerMps) / effectiveHeaveMass;
     state.verticalVelocity += verticalAcceleration * dt;
     state.positionY += state.verticalVelocity * dt;
     const targetPitch = Math.atan(pitchSlope) + clamp(state.lastLongitudinalAcceleration * 0.006, -0.005, 0.005);
-    state.pitchVelocity += ((targetPitch - state.pitch) * config.pitchSpringPerSecondSquared - state.pitchVelocity * config.pitchDampingPerSecond) * dt;
+    const waterPitchVelocity = pitchSlopeVelocity / (1 + pitchSlope * pitchSlope);
+    state.pitchVelocity += ((targetPitch - state.pitch) * config.pitchSpringPerSecondSquared -
+      (state.pitchVelocity - waterPitchVelocity) * config.pitchDampingPerSecond) * dt;
     state.pitch += state.pitchVelocity * dt;
-    const targetRoll = Math.atan(sumXH / sumXX) + clamp(state.yawRate * state.forwardSpeed * 0.13, -0.065, 0.065);
-    state.rollVelocity += ((targetRoll - state.roll) * config.rollSpringPerSecondSquared - state.rollVelocity * config.rollDampingPerSecond) * dt;
+    const targetRoll = Math.atan(rollSlope) + clamp(state.yawRate * state.forwardSpeed * 0.13, -0.065, 0.065);
+    const waterRollVelocity = rollSlopeVelocity / (1 + rollSlope * rollSlope);
+    state.rollVelocity += ((targetRoll - state.roll) * config.rollSpringPerSecondSquared -
+      (state.rollVelocity - waterRollVelocity) * config.rollDampingPerSecond) * dt;
     state.roll += state.rollVelocity * dt;
   }
 }

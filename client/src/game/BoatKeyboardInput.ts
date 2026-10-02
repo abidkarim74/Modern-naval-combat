@@ -1,4 +1,4 @@
-const GAME_KEYS = new Set(["w", "a", "s", "d", " ", "arrowup", "arrowdown", "arrowleft", "arrowright"]);
+const GAME_KEYS = new Set(["w", "a", "s", "d", "r", "t", " ", "arrowup", "arrowdown", "arrowleft", "arrowright"]);
 
 export class BoatKeyboardInput {
   private readonly pressedKeys = new Set<string>();
@@ -35,6 +35,17 @@ export class BoatKeyboardInput {
     return pressed;
   }
 
+  consumeMissileLaunchPress(): "forward" | "aft" | null {
+    const bank = this.newlyPressedKeys.has("r") ? "forward" : this.newlyPressedKeys.has("t") ? "aft" : null;
+    this.newlyPressedKeys.delete("r");
+    this.newlyPressedKeys.delete("t");
+    return bank;
+  }
+
+  clear(): void {
+    this.clearKeys();
+  }
+
   dispose(): void {
     window.removeEventListener("keydown", this.onKeyDown);
     window.removeEventListener("keyup", this.onKeyUp);
@@ -47,6 +58,7 @@ export class BoatKeyboardInput {
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     const key = event.key.toLowerCase();
     if (!GAME_KEYS.has(key) || isTypingTarget(event.target)) return;
+    if ((key === "r" || key === "t") && (event.repeat || event.ctrlKey || event.metaKey || event.altKey)) return;
     if (!this.pressedKeys.has(key)) this.newlyPressedKeys.add(key);
     this.pressedKeys.add(key);
     event.preventDefault();

@@ -10,7 +10,7 @@ export interface MountSurface { readonly point: Vector3; readonly normal: Vector
 // The structure and its fittings use the same dimensions and sloping surfaces.
 export const DESTROYER_HOUSES = {
   forward: {width:15.4,depth:39,height:7.6,chamfer:3.5,inset:.65,y:5,z:16},
-  aegis: {width:13.9,depth:17,height:7.1,chamfer:3.4,inset:.9,y:12.6,z:25},
+  aegis: {width:13.9,depth:17,height:7.1,chamfer:4.1,inset:.9,y:12.6,z:25},
   hangar: {width:14.8,depth:23,height:6.9,chamfer:1.4,inset:.4,y:4.7,z:-35},
   aft: {width:12.8,depth:15,height:5.9,chamfer:2.3,inset:.6,y:4.7,z:-17.5},
   pilothouse: {width:13.7,depth:6,height:3.4,chamfer:0,inset:.55,y:18.2,z:29},

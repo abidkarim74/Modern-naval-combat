@@ -14,7 +14,7 @@
     "build": "npm run build -w @naval/shared && npm run build -w @naval/client && npm run build -w @naval/server",
     "typecheck": "npm run build -w @naval/shared && npm run typecheck -w @naval/client && npm run typecheck -w @naval/server",
     "check": "npm run typecheck && npm run build",
-    "test": "npm run build -w @naval/shared && node --test shared/tests/*.test.mjs"
+    "test": "npm run build -w @naval/shared && node --test shared/tests/*.test.mjs client/tests/*.test.mjs"
   },
   "engines": {
     "node": ">=22.9.0",

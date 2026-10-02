@@ -246,41 +246,6 @@ export function addDestroyerHouseFront(scene: Scene, root: Mesh, casters: Mesh[]
   // The pilothouse roof has the larger checker-grille bank and service gear
   // visible behind the smaller platform in the aerial reference.
   const bridgeRoofY = 21.875;
-  box("bridge-roof-grille-recess", 3.95, .055, 4.16, 3.47, bridgeRoofY + .045, 27.91, dark);
-  for (let col = 0; col < 5; col++) for (let row = 0; row < 6; row++) {
-    box("bridge-roof-black-vent-grid", .57, .042, .52,
-      2.04 + col * .71, bridgeRoofY + .094, 26.43 + row * .59,
-      (col + row) % 4 === 0 ? radar : dark);
-  }
-  for (const x of [1.50, 5.44]) tube("bridge-roof-grille-frame",
-    [[x, bridgeRoofY + .09, 25.86], [x, bridgeRoofY + .09, 29.98]], .038, light);
-  for (const z of [25.86, 29.98]) tube("bridge-roof-grille-frame",
-    [[1.50, bridgeRoofY + .09, z], [5.44, bridgeRoofY + .09, z]], .038, light);
-  box("bridge-roof-light-equipment-hatch", 2.50, .13, 2.25, -3.48,
-    bridgeRoofY + .10, 27.68, light);
-  box("bridge-roof-hatch-recess", 1.96, .065, 1.70, -3.48,
-    bridgeRoofY + .205, 27.68, gray);
-  for (const side of [-1, 1]) {
-    box("bridge-roof-hatch-grab", .10, .13, .54, -3.48 + side * .72,
-      bridgeRoofY + .29, 27.68, radar);
-    for (const z of [26.15, 27.60, 29.05, 30.50, 31.96]) {
-      if (side < 0 && z === 30.50) continue; // opening for the outside ladder
-      const x = side * 6.68;
-      tube("bridge-roof-edge-post", [[x, bridgeRoofY + .04, z],
-        [x, bridgeRoofY + .96, z]], .038, light);
-    }
-    for (const h of [.49, .96]) {
-      const segments = side < 0 ? [[25.92, 29.90], [31.05, 32.03]] : [[25.92, 32.03]];
-      for (const [start, end] of segments) tube("bridge-roof-edge-lifeline",
-        [[side * 6.68, bridgeRoofY + h, start], [side * 6.68, bridgeRoofY + h, end]], .029, light);
-    }
-  }
-  for (let x = -6.68; x <= 6.69; x += 1.34) tube("bridge-roof-forward-rail-post",
-    [[x, bridgeRoofY + .04, 32.03], [x, bridgeRoofY + .96, 32.03]], .037, light);
-  for (const h of [.49, .96]) tube("bridge-roof-forward-lifeline",
-    [[-6.68, bridgeRoofY + h, 32.03], [6.68, bridgeRoofY + h, 32.03]], .030, light);
-
-  // A compact dome stage and its ladder make the roof read as working space.
   const domeX = -5.14, domeZ = 30.39;
   box("bridge-roof-sensor-stage", 2.35, .14, 1.48, domeX, bridgeRoofY + .15, domeZ, deck);
   for (const x of [domeX - 1.07, domeX + 1.07]) {

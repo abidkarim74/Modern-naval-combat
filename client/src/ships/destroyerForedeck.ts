@@ -9,11 +9,14 @@ import { CreateTube } from "@babylonjs/core/Meshes/Builders/tubeBuilder";
 import type { PBRMaterial } from "@babylonjs/core/Materials/PBR/pbrMaterial";
 import type { Scene } from "@babylonjs/core/scene";
 import { ForedeckGunFire } from "./ForedeckGunFire";
+import { createVlsLaunchCell } from "./destroyerVls";
+import type { VlsLaunchCell } from "./destroyerVls";
 
 type ForedeckPaint = Record<"gray" | "light" | "dark" | "radar" | "white" | "orange" | "red" | "green", PBRMaterial>;
 
 export interface ForedeckGunControls {
   readonly animatedMeshes: readonly Mesh[];
+  readonly missileLaunchCells: readonly VlsLaunchCell[];
   readonly cameraMount: TransformNode;
   updateAim(traverseDirection: number, elevationDirection: number, deltaSeconds: number): void;
   fire(worldTime: number): boolean;
@@ -45,6 +48,7 @@ export function addDestroyerForedeck(
     tube(name, xz.map(([x, z]) => [x, deckHeight(z) + lift, z]), radius, material);
 
   // The flush Mk 41 bank has 32 separate covers in a low, pale coaming.
+  const missileLaunchCells: VlsLaunchCell[] = [];
   const vlsY = deckHeight(42) + .08;
   box("forward-VLS-dark-recess", 7.66, .16, 6.42, 0, vlsY + .07, 42, dark);
   for (const side of [-1, 1]) {
@@ -54,12 +58,16 @@ export function addDestroyerForedeck(
   for (const z of [38.76, 45.24]) box("forward-VLS-end-coaming", 7.9, .24, .18, 0, vlsY + .19, z, light);
   for (let row = 0; row < 4; row++) for (let col = 0; col < 8; col++) {
     const x = (col - 3.5) * .91, z = 42 + (row - 1.5) * 1.47;
-    box("Mk41-cell-hatch-frame", .83, .085, 1.34, x, vlsY + .20, z, radar);
-    box("Mk41-cell-hatch-panel", .73, .065, 1.23, x, vlsY + .27, z, light);
-    surfaceLine("Mk41-hatch-center-seam", [[x, z - .51], [x, z + .51]], .012, gray, vlsY - deckHeight(z) + .315);
-    box("Mk41-hatch-hinge", .21, .07, .09, x - .24, vlsY + .33, z - .48, dark);
-    box("Mk41-hatch-hinge", .21, .07, .09, x + .24, vlsY + .33, z - .48, dark);
-    box("Mk41-red-warning-tab", .16, .025, .13, x, vlsY + .315, z + .44, red);
+    // The four stationary rim rails leave a dark cell visible when the cover lifts.
+    for (const side of [-1, 1]) {
+      box("Mk41-cell-hatch-frame-side", .05, .085, 1.34, x + side * .39, vlsY + .20, z, radar);
+      box("Mk41-cell-hatch-frame-end", .73, .085, .055, x, vlsY + .20, z + side * .6425, radar);
+      box("Mk41-hatch-hinge", .21, .07, .09, x + side * .24, vlsY + .27, z - .615, dark);
+    }
+    missileLaunchCells.push(createVlsLaunchCell(scene, root, casters, {
+      bank: "forward", index: row * 8 + col, x, y: vlsY + .27, z,
+      width: .73, depth: 1.23, thickness: .065,
+    }, { gray, light, dark, red }));
   }
   for (const side of [-1, 1]) for (const z of [39.2, 44.8]) {
     box("VLS-maintenance-panel", .65, .045, .86, side * 4.8, deckHeight(z) + .065, z, radar);
@@ -201,7 +209,8 @@ export function addDestroyerForedeck(
   let traverse = 0;
   let elevation = 0;
   return {
-    animatedMeshes: [...traverseMeshes, ...elevationMeshes],
+    animatedMeshes: [...traverseMeshes, ...elevationMeshes, ...missileLaunchCells.flatMap(cell => cell.hatchMeshes)],
+    missileLaunchCells,
     cameraMount: elevationPivot,
     updateAim(traverseDirection, elevationDirection, deltaSeconds) {
       traverse = Math.max(-Math.PI * .42, Math.min(Math.PI * .42,

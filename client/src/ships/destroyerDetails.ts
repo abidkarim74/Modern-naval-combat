@@ -6,7 +6,7 @@ import { CreateSphere } from "@babylonjs/core/Meshes/Builders/sphereBuilder";
 import { CreateTorus } from "@babylonjs/core/Meshes/Builders/torusBuilder";
 import { CreateTube } from "@babylonjs/core/Meshes/Builders/tubeBuilder";
 import { DynamicTexture } from "@babylonjs/core/Materials/Textures/dynamicTexture";
-import { Vector3 } from "@babylonjs/core/Maths/math.vector";
+import { Quaternion, Vector3 } from "@babylonjs/core/Maths/math.vector";
 import type { PBRMaterial } from "@babylonjs/core/Materials/PBR/pbrMaterial";
 import type { Scene } from "@babylonjs/core/scene";
 import type { BoatSimulationState } from "@naval/shared";
@@ -93,11 +93,6 @@ export function addDestroyerDetails(scene: Scene, root: Mesh, casters: Mesh[], p
       const reel=register(CreateTorus("fire-hose-reel",{diameter:.65,thickness:.17,tessellation:12},scene),orange);
       seatSurfaceCylinder(reel,sideSurface(layout,side,y-.25,z-1),.17,.035);
     }
-    sphere("RHIB-port-inflatable-tube", side * 7 - .72, 7.5, -6, .48, .55, 6.4, dark);
-    sphere("RHIB-starboard-inflatable-tube", side * 7 + .72, 7.5, -6, .48, .55, 6.4, dark);
-    box("RHIB-console", .65, 1.1, .65, side * 7, 7.8, -5.2, light);
-    box("RHIB-windscreen", .65, .42, .06, side * 7, 8.4, -4.88, glass);
-    box("RHIB-outboard", .5, .85, .5, side * 7, 7.15, -9.4, dark);
     // Canisters and electronics sit on their own deck, inside its perimeter.
     for (const z of [-28, -25.5, 1, 4, 7]) {
       const x=side*6.0, roof=z>0?roofHeight(DESTROYER_HOUSES.forward):HANGAR_ROOF_Y, y=roof+.22;
@@ -120,12 +115,22 @@ export function addDestroyerDetails(scene: Scene, root: Mesh, casters: Mesh[], p
       box("SLQ32-array",2.4,1.6,2.9,x,roof+1.75,z,radar);
       for(let i=0;i<5;i++)box("electronic-array-fin",.12,1.75,3,x+(i-2)*.42,roof+1.75,z,gray);
     }
-    const torpedoX=side*4.7, torpedoZ=-7;
+    const torpedoX=side*3.5, torpedoZ=-5.5;
     cylinder("torpedo-mount-foot",1.0,1.1,torpedoX,BOAT_DECK_Y+.54,torpedoZ,radar);
     box("torpedo-mount-bracket",1.35,.25,2.2,torpedoX,BOAT_DECK_Y+1.17,torpedoZ,gray);
-    for(let row=0;row<3;row++){
-      const mount=cylinder("Mk32-triple-torpedo-tube",.55,3.8,torpedoX,BOAT_DECK_Y+1.55+row*.53,torpedoZ,light);
-      mount.rotation.x=Math.PI/2;
+    // Three tubes form a compact triangular cluster on one training cradle.
+    const direction=new Vector3(side*.55,0,.835).normalize(), across=new Vector3(side*.835,0,-.55).normalize();
+    for(const [offset,dy] of [[-.30,0],[.30,0],[0,.52]]) {
+      const center=new Vector3(torpedoX,BOAT_DECK_Y+1.55+dy,torpedoZ).add(across.scale(offset));
+      const mount=cylinder("Mk32-triple-torpedo-tube",.55,3.8,center.x,center.y,center.z,light);
+      mount.rotationQuaternion=Quaternion.RotationQuaternionFromAxis(across,direction,Vector3.Cross(across,direction).normalize());
+      const tip=center.add(direction.scale(1.93));
+      const cap=cylinder("Mk32-torpedo-tube-end",.58,.09,tip.x,tip.y,tip.z,radar);
+      cap.rotationQuaternion=mount.rotationQuaternion.clone();
+      for(const distance of [-1.15,1.15]) {
+        const p=center.add(direction.scale(distance)),band=register(CreateTorus("Mk32-torpedo-retaining-band",{diameter:.58,thickness:.045,tessellation:12},scene),gray);
+        band.position.copyFrom(p);band.rotationQuaternion=mount.rotationQuaternion.clone();
+      }
     }
     for(const z of [12,-44]){
       const roof=z>0?roofHeight(DESTROYER_HOUSES.forward):HANGAR_ROOF_Y, x=side*(z>0?6.4:5.8);
@@ -139,39 +144,9 @@ export function addDestroyerDetails(scene: Scene, root: Mesh, casters: Mesh[], p
       wallBox("hangar-intake",.15,2.9,3.6,side,9.1,z,DESTROYER_HOUSES.hangar,radar);
       for(let y=7.85;y<10.6;y+=.26)wallBox("hangar-intake-louver",.19,.075,3.3,side,y,z,DESTROYER_HOUSES.hangar,light,.12);
     }
-    // Open safety nets outside the landing area.
-    for (let z = -74; z < -49; z += 4.2) {
-      tube("flight-deck-safety-net-frame", [[side * hullBeam(z), deckHeight(z) + .05, z], [side * (hullBeam(z) + 1.3), deckHeight(z) - .45, z],
-        [side * (hullBeam(z + 3.9) + 1.3), deckHeight(z + 3.9) - .45, z + 3.9]], .035, gray);
-      for (let j = 1; j < 4; j++) tube("flight-deck-net", [[side * (hullBeam(z) + j * .3), deckHeight(z) - j * .1, z],
-        [side * (hullBeam(z + 3.9) + j * .3), deckHeight(z + 3.9) - j * .1, z + 3.9]], .012, radar);
-    }
+
   }
 
-  // Mast platforms, ladder, antenna trunks, cross braces and standing rigging.
-  for (const [y, width, depth] of [[27.6, 7.4, 4.2], [32.2, 9.6, 4.5], [35.7, 6.4, 3.0]]) {
-    box("mast-grated-platform", width, .16, depth, 0, y, 20, deck);
-    railing("mast-platform-lifeline", -width / 2, 20 - depth / 2, width / 2, 20 - depth / 2, y);
-    railing("mast-platform-lifeline", -width / 2, 20 + depth / 2, width / 2, 20 + depth / 2, y);
-    for (const side of [-1, 1]) { railing("mast-platform-lifeline", side * width / 2, 20 - depth / 2, side * width / 2, 20 + depth / 2, y);
-      tube("mast-diagonal-brace", [[side * 1.4, y - 3, 20], [side * width / 2, y, 20]], .10, light); }
-  }
-  for (const side of [-1, 1]) {
-    tube("mast-stay", [[side * 5.8, 21.77, 28], [0, 36.5, 20]], .018, dark);
-    tube("signal-halyard", [[side * 4.2, 35.7, 20], [side * 5.2, MAST_FOOT_Y+.025, 23]], .012, dark);
-    for (let i = 0; i < 7; i++) {const height=2.4+i%3;
-      cylinder("mast-whip-array",.065,height,side*(1.0+i*.48),32.28+height/2-.01,19.4,gray);
-    }
-  }
-  tube("mast-ladder-rail", [[.62, MAST_FOOT_Y, 18.08], [.35, 36.5, 19.15]], .035, light);
-  tube("mast-ladder-rail", [[1.19, MAST_FOOT_Y, 18.08], [.92, 36.5, 19.15]], .035, light);
-  for(let y=MAST_FOOT_Y+.3;y<36.3;y+=.38){const t=(y-MAST_FOOT_Y)/(36.5-MAST_FOOT_Y);
-    tube("mast-ladder-rung",[[.62-.27*t,y,18.08+1.07*t],[1.19-.27*t,y,18.08+1.07*t]],.023,light);
-  }
-  for(const y of [20,24,28,32,35])tube("mast-ladder-standoff",[[.6,y,20],[.6,y,18.08+1.07*(y-MAST_FOOT_Y)/(36.5-MAST_FOOT_Y)]],.045,gray);
-  cylinder("mast-top-sensor-pedestal", .9, 1.4, 0, 39.4, 20, gray);
-  sphere("mast-top-radome", 0, 40.35, 20, 1.7, 1.55, 1.7, white);
-  cylinder("mast-top-antenna", .07, 2.8, 0, 42.0, 20, light);
   for (const [x, z, roof] of [[0, 23.5, MAST_FOOT_Y], [-3.0, -37, HANGAR_ROOF_Y], [3.0, -37, HANGAR_ROOF_Y]]) {
     const y=roof+.61;
     cylinder("SPG62-illuminator-pedestal", 1.0, 1.25, x, y, z, gray);
@@ -185,37 +160,16 @@ export function addDestroyerDetails(scene: Scene, root: Mesh, casters: Mesh[], p
     cylinder("aft-antenna-foot", .5, .7, side * 5.1, HANGAR_ROOF_Y+.34, -42, light);
   }
 
-  // A parked folded-rotor Seahawk gives the aft working deck its proper scale.
-  const hx = 3.0, hz = -62, hy = deckHeight(hz);
-  sphere("Seahawk-fuselage", hx, hy + 1.55, hz, 2.05, 2.2, 5.8, gray);
-  sphere("Seahawk-cockpit", hx, hy + 1.9, hz + 2.05, 1.8, 1.5, 1.6, glass);
-  box("Seahawk-windscreen-divider", .1, 1.4, 1.8, hx, hy + 2.0, hz + 2.12, gray);
-  tube("Seahawk-tail-boom", [[hx, hy + 1.5, hz - 2], [hx, hy + 1.8, hz - 7.1]], .35, gray);
-  const fin = box("Seahawk-tail-fin", .15, 2.2, 1.35, hx, hy + 2.5, hz - 7.2, gray); fin.rotation.x = -.24;
-  box("Seahawk-tail-stabilizer", 3.1, .13, .9, hx, hy + 1.6, hz - 6, gray);
-  for (const side of [-1, 1]) {
-    sphere("Seahawk-engine-nacelle", hx + side * .67, hy + 2.85, hz - .7, .65, .72, 2.3, gray);
-    tube("Seahawk-main-gear", [[hx + side * .7, hy + 1.0, hz + .3], [hx + side * 1.1, hy + .4, hz + .3]], .11, dark);
-    const tire = cylinder("Seahawk-main-wheel", .64, .18, hx + side * 1.1, hy + .32, hz + .3, dark); tire.rotation.z = Math.PI / 2;
-    box("Seahawk-cabin-door", .035, 1.2, 1.5, hx + side * 1.025, hy + 1.4, hz - .35, radar);
-    box("Seahawk-cabin-window", .045, .55, .75, hx + side * 1.05, hy + 1.9, hz - .35, glass);
-  }
-  cylinder("Seahawk-rotor-mast", .24, .8, hx, hy + 3.5, hz - .1, dark);
-  for (const x of [-.54, -.18, .18, .54]) box("Seahawk-folded-main-blade", .25, .055, 6.0, hx + x, hy + 3.9, hz - 3.0, dark);
-  tube("Seahawk-tail-gear", [[hx, hy + 1.3, hz - 5.3], [hx, hy + .3, hz - 5.3]], .08, gray);
-  const tailTire = cylinder("Seahawk-tail-wheel", .38, .15, hx, hy + .19, hz - 5.3, dark); tailTire.rotation.z = Math.PI / 2;
-  for (const side of [-1, 1]) tube("Seahawk-tie-down-chain", [[hx + side * 1.0, hy + .5, hz + .3], [hx + side * 2.0, hy + .1, hz + 1.1]], .025, radar);
-
   const flagTexture=new DynamicTexture("underway-ensign",{width:512,height:256},scene,true);
   const flagCanvas=flagTexture.getContext();
   for(let row=0;row<13;row++){flagCanvas.fillStyle=row%2?"#ebe8dc":"#a94143";flagCanvas.fillRect(0,row*256/13,512,256/13+1);}
   flagCanvas.fillStyle="#334f78";flagCanvas.fillRect(0,0,214,138);
   flagCanvas.fillStyle="#e4e7df";for(let row=0;row<9;row++)for(let col=0;col<(row%2?5:6);col++){flagCanvas.beginPath();flagCanvas.arc(18+col*35+(row%2?17:0),12+row*14,2.7,0,Math.PI*2);flagCanvas.fill();}flagTexture.update();
-  const flagPaint=white.clone("ensign-fabric")!;flagPaint.albedoTexture=flagTexture;flagPaint.backFaceCulling=false;flagPaint.twoSidedLighting=true;
-  tube("ensign-hoist-line",[[.8,31,20],[.8,35.7,20]],.02,dark);
-  const flag=register(new Mesh("wind-driven-underway-ensign",scene),flagPaint);flag.position.set(.8,31.9,20);
+  const flagPaint=white.clone("ensign-fabric")!;flagPaint.albedoTexture=flagTexture;flagPaint.backFaceCulling=false;flagPaint.twoSidedLighting=true;flagPaint.roughness=.97;flagPaint.metallic=0;
+  tube("ensign-hoist-line",[[-1.45,31.1,20.38],[-1.45,35.9,20.38]],.015,dark);
+  const flag=register(new Mesh("wind-driven-underway-ensign",scene),flagPaint);flag.position.set(-1.45,31.25,20.38);
   const flagPositions=new Float32Array(12*2*3),flagUvs:number[]=[],flagIndices:number[]=[];
-  for(let i=0;i<12;i++){for(let j=0;j<2;j++){const index=(i*2+j)*3;flagPositions[index+1]=j?0:2.5;flagPositions[index+2]=-i/11*4.8;flagUvs.push(i/11,j?0:1);}if(i<11){const a=i*2;flagIndices.push(a,a+1,a+2,a+1,a+3,a+2);}}
+  for(let i=0;i<12;i++){for(let j=0;j<2;j++){const index=(i*2+j)*3;flagPositions[index]=-i/11*6.6;flagPositions[index+1]=j?0:3.5;flagPositions[index+2]=-i/11*3.1;flagUvs.push(i/11,j?0:1);}if(i<11){const a=i*2;flagIndices.push(a,a+1,a+2,a+1,a+3,a+2);}}
   const flagNormals:number[]=[];VertexData.ComputeNormals(flagPositions,flagIndices,flagNormals);
   const flagData=new VertexData();flagData.positions=flagPositions;flagData.indices=flagIndices;flagData.normals=flagNormals;flagData.uvs=flagUvs;flagData.applyToMesh(flag,true);
   const animated: Mesh[] = [flag], rudders: Mesh[] = [], props: Mesh[] = [];
@@ -236,10 +190,13 @@ export function addDestroyerDetails(scene: Scene, root: Mesh, casters: Mesh[], p
   }
   return { animated, update(state, dt) {
     for(let i=0;i<12;i++)for(let j=0;j<2;j++){const t=i/11,index=(i*2+j)*3;
-      flagPositions[index]=Math.sin(t*9-state.elapsedTime*(3+state.speed*.08)+j*.4)*t*.42;
-      flagPositions[index+1]=(j?0:2.5)-t*.28+Math.sin(t*8-state.elapsedTime*3.3)*t*.11;
+      const flutter=Math.sin(t*9-state.elapsedTime*(3+state.speed*.08)+j*.4)*t*.42;
+      flagPositions[index]=-t*6.6+flutter*.425;
+      flagPositions[index+2]=-t*3.1-flutter*.906;
+      flagPositions[index+1]=(j?0:3.5)-t*.72+Math.sin(t*8-state.elapsedTime*3.3)*t*.11;
     }
     flag.updateVerticesData("position",flagPositions,false,false);
+    VertexData.ComputeNormals(flagPositions,flagIndices,flagNormals);flag.updateVerticesData("normal",flagNormals,false,false);
     for (let i = 0; i < props.length; i++) props[i].rotation.z += (i === 0 ? 1 : -1) * state.throttle * 9.5 * dt;
     for (const rudder of rudders) rudder.rotation.y = -state.rudderAngleRadians;
   } };

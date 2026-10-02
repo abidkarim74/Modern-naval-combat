@@ -2,8 +2,11 @@ export type GraphicsQuality = "High" | "Medium" | "Low";
 
 export interface GraphicsQualitySettings {
   readonly oceanSubdivisions: number;
+  readonly oceanCellSizeMeters: number;
+  readonly waterDetailLevel: 0 | 1 | 2;
   readonly waterDetailStrength: number;
   readonly waterReflectionStrength: number;
+  readonly skyDetailLevel: 0 | 1 | 2;
   readonly cloudCount: number;
   readonly birdCount: number;
   readonly shadowMapSize: number;
@@ -13,9 +16,12 @@ export interface GraphicsQualitySettings {
 
 export const GRAPHICS_QUALITY_SETTINGS: Readonly<Record<GraphicsQuality, GraphicsQualitySettings>> = {
   High: {
-    oceanSubdivisions: 300,
+    oceanSubdivisions: 96,
+    oceanCellSizeMeters: 2,
+    waterDetailLevel: 2,
     waterDetailStrength: 1,
     waterReflectionStrength: 0.92,
+    skyDetailLevel: 2,
     cloudCount: 9,
     birdCount: 12,
     shadowMapSize: 1024,
@@ -23,9 +29,12 @@ export const GRAPHICS_QUALITY_SETTINGS: Readonly<Record<GraphicsQuality, Graphic
     viewDistanceMeters: 8_000,
   },
   Medium: {
-    oceanSubdivisions: 220,
+    oceanSubdivisions: 64,
+    oceanCellSizeMeters: 3,
+    waterDetailLevel: 1,
     waterDetailStrength: 0.78,
     waterReflectionStrength: 0.84,
+    skyDetailLevel: 1,
     cloudCount: 7,
     birdCount: 10,
     shadowMapSize: 512,
@@ -33,9 +42,12 @@ export const GRAPHICS_QUALITY_SETTINGS: Readonly<Record<GraphicsQuality, Graphic
     viewDistanceMeters: 6_800,
   },
   Low: {
-    oceanSubdivisions: 160,
+    oceanSubdivisions: 48,
+    oceanCellSizeMeters: 4,
+    waterDetailLevel: 0,
     waterDetailStrength: 0.48,
     waterReflectionStrength: 0.72,
+    skyDetailLevel: 0,
     cloudCount: 4,
     birdCount: 6,
     shadowMapSize: 0,

@@ -116,25 +116,61 @@ select { font: inherit; }
 .live-dot { background: #66d6ae; }
 .status-error { background: #f27676; }
 
-.camera-toggle {
+.nav-actions {
   position: absolute;
+  z-index: 3;
   top: 24px;
   left: 50%;
   display: flex;
+  align-items: stretch;
+  gap: 8px;
+  transform: translateX(-50%);
+}
+
+.camera-toggle,
+.island-view-button {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
   align-items: center;
+  justify-content: center;
   gap: 9px;
   padding: 11px 15px;
   color: #e8f2f4;
   font-size: 11px;
+  white-space: nowrap;
   cursor: pointer;
-  transform: translateX(-50%);
   transition: border-color 140ms ease, background 140ms ease;
 }
 
-.camera-toggle:hover:not(:disabled) { border-color: rgb(101 218 224 / 55%); background: #173642; }
-.camera-toggle:focus-visible { outline: 2px solid #65dae0; outline-offset: 3px; }
-.camera-toggle:disabled { opacity: .65; cursor: default; }
-.camera-toggle span { color: #71d9dc; font-size: 15px; }
+.camera-toggle:hover:not(:disabled),
+.island-view-button:hover:not(:disabled) { border-color: rgb(101 218 224 / 55%); background: #173642; }
+.camera-toggle:focus-visible,
+.island-view-button:focus-visible { outline: 2px solid #65dae0; outline-offset: 3px; }
+.camera-toggle:disabled,
+.island-view-button:disabled { opacity: .65; cursor: default; }
+.camera-toggle span,
+.island-view-button span { color: #71d9dc; font-size: 15px; }
+.island-view-button { border-color: rgb(101 218 224 / 37%); background: linear-gradient(145deg, rgb(20 55 65 / 92%), rgb(11 37 47 / 88%)); }
+.island-view-button[aria-pressed="true"] { border-color: rgb(156 230 204 / 65%); background: linear-gradient(145deg, rgb(26 62 53 / 92%), rgb(12 39 39 / 88%)); }
+
+.island-panel {
+  bottom: 30px;
+  left: 26px;
+  width: 248px;
+  padding: 15px 16px 13px;
+  border-color: rgb(156 230 204 / 28%);
+}
+
+.base-control-status { display: flex; align-items: center; gap: 5px; color: #a7e5cf; font: 9px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: nowrap; }
+.base-control-status span { width: 5px; height: 5px; border-radius: 50%; background: #9ce6cc; box-shadow: 0 0 7px rgb(156 230 204 / 40%); }
+.island-panel h2 { margin: 0; font-size: 23px; line-height: 1.1; font-weight: 500; letter-spacing: -.03em; }
+.island-description { margin: 8px 0 12px; color: #a6c2cc; font-size: 11px; line-height: 1.6; }
+.island-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding-top: 11px; border-top: 1px solid rgb(215 231 236 / 13%); }
+.island-facts > div { display: grid; gap: 5px; }
+.island-facts strong { font-size: 10px; font-weight: 500; }
+.island-camera-note { margin: 13px 0 0; color: #89b5aa; font: 9px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.island-view .control-panel { left: 300px; right: 26px; }
 
 .speed-panel {
   bottom: 30px;
@@ -210,12 +246,14 @@ select { font: inherit; }
 
 .control-panel {
   bottom: 30px;
-  left: 50%;
+  left: 257px;
+  right: 282px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 17px;
+  justify-content: center;
+  gap: 10px 14px;
   padding: 11px 15px;
-  transform: translateX(-50%);
 }
 
 .control-hint { display: flex; align-items: center; gap: 5px; color: #bdccd0; font-size: 10px; white-space: nowrap; }
@@ -233,7 +271,27 @@ kbd {
 }
 
 .hint-divider { width: 1px; height: 19px; background: rgb(215 231 236 / 18%); }
-.mouse-hint { color: #91abb5; font: 400 9px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: nowrap; }
+.mouse-hint { color: #91abb5; font: 400 9px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; text-align: center; }
+
+.missile-panel { right: 26px; bottom: 30px; width: 230px; padding: 13px 15px; }
+.missile-panel .panel-title { margin-bottom: 10px; }
+.missile-readiness { color: #9ce6cc; font: 500 9px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; text-transform: uppercase; letter-spacing: .08em; }
+.missile-readiness.is-cooling { color: #edbd84; }
+.missile-launchers { display: grid; gap: 7px; }
+.missile-launch-button { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; padding: 9px 10px; border: 1px solid rgb(101 218 224 / 25%); border-radius: 4px; color: #e8f2f4; background: rgb(88 160 167 / 9%); text-align: left; cursor: pointer; transition: border-color 140ms ease, background 140ms ease; }
+.missile-launch-button > span { display: grid; gap: 4px; }
+.missile-launch-button strong { font-size: 11px; font-weight: 600; white-space: nowrap; }
+.missile-launch-button small { color: #9bb7c3; font: 9px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: nowrap; }
+.missile-launch-button:hover:not(:disabled) { border-color: #65dae0; background: rgb(88 160 167 / 22%); }
+.missile-launch-button:focus-visible { outline: 2px solid #65dae0; outline-offset: 3px; }
+.missile-launch-button:disabled { opacity: .45; cursor: default; }
+.missile-flight-status { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 4px 8px; margin-top: 11px; color: #a6c2cc; font: 9px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.missile-flight-status > span { grid-column: 1; }
+.missile-flight-status > span:nth-of-type(2) { color: #83c4c8; white-space: nowrap; }
+.missile-track-button { grid-column: 2; grid-row: 1 / span 2; padding: 6px 7px; border: 1px solid rgb(101 218 224 / 25%); border-radius: 4px; color: #c9e7e4; background: rgb(88 160 167 / 9%); font-size: 9px; white-space: nowrap; cursor: pointer; }
+.missile-track-button:hover:not(:disabled), .missile-track-button[aria-pressed="true"] { border-color: #65dae0; background: rgb(88 160 167 / 22%); }
+.missile-track-button:focus-visible { outline: 2px solid #65dae0; outline-offset: 3px; }
+.missile-track-button:disabled { opacity: .45; cursor: default; }
 
 .error-message {
   position: absolute;
@@ -249,26 +307,76 @@ kbd {
   transform: translate(-50%, -50%);
 }
 
+@media (min-width: 621px) and (max-width: 1200px) {
+  .nav-actions { top: 91px; left: 26px; transform: none; }
+}
+
 @media (max-width: 900px) {
-  .control-panel { left: auto; right: 20px; transform: none; gap: 11px; }
+  .control-panel { left: 26px; right: 26px; bottom: 235px; gap: 11px; }
   .mouse-hint { display: none; }
+  .island-view .control-panel { left: 26px; right: 26px; bottom: 30px; }
+  .island-panel { bottom: 111px; }
+  .island-mouse-hint { display: block; width: 100%; line-height: 1.5; }
 }
 
 @media (max-width: 620px) {
-  .camera-toggle { top: 14px; left: auto; right: 14px; padding: 9px 11px; font-size: 10px; transform: none; }
+  .nav-actions { top: 72px; left: 14px; right: 14px; transform: none; gap: 6px; }
+  .camera-toggle,
+  .island-view-button { padding: 9px 11px; font-size: 10px; white-space: nowrap; }
   .identity-panel { top: 14px; left: 14px; min-width: 0; gap: 9px; padding: 10px; }
   .identity-copy { min-width: 0; }
   .identity-copy .eyebrow { font-size: 8px; }
   .identity-copy h1 { font-size: 13px; }
   .renderer-status { margin-left: 2px; padding-left: 8px; font-size: 8px; }
-  .performance-panel { top: 85px; right: 14px; width: 175px; padding: 11px; }
+  .performance-panel { top: 117px; right: 14px; width: 175px; padding: 11px; }
   .performance-grid { gap: 9px 6px; }
   .speed-panel { bottom: 14px; left: 14px; width: 158px; padding: 11px 12px; }
   .speed-reading strong { font-size: 31px; }
-  .control-panel { left: 14px; right: auto; bottom: 180px; gap: 7px; padding: 9px; flex-wrap: wrap; max-width: calc(100% - 28px); }
+  .control-panel { left: 186px; right: 14px; bottom: 14px; gap: 7px; padding: 9px; justify-content: flex-start; }
+  .missile-panel { left: 14px; right: 14px; bottom: 203px; width: auto; padding: 11px; }
+  .missile-launchers { grid-template-columns: 1fr 1fr; }
+  .missile-launch-button { padding: 9px 7px; gap: 4px; }
+  .missile-launch-button strong { font-size: 10px; }
   .control-hint { gap: 3px; font-size: 9px; }
   .control-hint kbd { min-width: 17px; height: 18px; }
   .hint-divider { display: none; }
+  .island-panel { left: 14px; bottom: 104px; width: 186px; padding: 12px; }
+  .island-panel .panel-title { flex-wrap: wrap; gap: 7px; }
+  .island-panel h2 { font-size: 21px; }
+  .island-description { font-size: 10px; }
+  .island-facts { gap: 7px; }
+  .island-facts strong { font-size: 9px; }
+  .island-view .control-panel { left: 14px; right: 14px; bottom: 14px; justify-content: center; padding: 11px; gap: 8px 12px; }
+}
+
+@media (max-width: 380px) {
+  .identity-panel { right: 14px; }
+  .renderer-status { display: none; }
+}
+
+@media (max-height: 560px) and (max-width: 900px) {
+  .performance-panel { display: none; }
+  .control-panel { bottom: 14px; left: 186px; right: 14px; }
+  .speed-panel { bottom: 14px; left: 14px; width: 158px; padding: 10px 12px; }
+  .speed-reading strong { font-size: 31px; }
+  .missile-panel { bottom: auto; top: 90px; right: 14px; left: auto; width: 210px; }
+  .missile-launchers { grid-template-columns: 1fr; }
+  .island-view .control-panel { left: 300px; right: 14px; bottom: 14px; }
+  .island-panel { left: 14px; bottom: 14px; }
+}
+
+@media (max-height: 560px) and (max-width: 620px) {
+  .nav-actions { top: 72px; left: 14px; right: 14px; }
+  .missile-panel { top: 117px; left: 14px; right: 14px; width: auto; }
+  .missile-launchers { grid-template-columns: 1fr 1fr; }
+  .island-view .control-panel { left: 14px; right: 14px; bottom: 14px; }
+  .island-panel { bottom: 104px; }
+  .island-description, .island-facts, .island-camera-note { display: none; }
+}
+
+@media (max-height: 430px) and (max-width: 620px) {
+  .island-panel { bottom: 101px; padding: 10px 12px; }
+  .island-description, .island-facts, .island-camera-note { display: none; }
 }
 
 .voyage-reading { display: flex; justify-content: space-between; gap: 12px; margin-top: 14px; color: #a6c2cc; font: 11px ui-monospace, monospace; letter-spacing: .04em; }

@@ -24,6 +24,15 @@ const EMPTY_TELEMETRY: GameTelemetry = {
   simulationTimeMs: 0,
   soundStatus: "off",
   activeBirds: 0,
+  cameraView: "chase",
+  missiles: {
+    forwardRemaining: 32,
+    aftRemaining: 64,
+    cooldownSeconds: 0,
+    activeMissiles: 0,
+    lastLaunchBank: null,
+    phase: null,
+  },
 };
 
 export function App() {
@@ -33,7 +42,8 @@ export function App() {
   const [telemetry, setTelemetry] = useState<GameTelemetry>(EMPTY_TELEMETRY);
   const [quality, setQuality] = useState<GraphicsQuality>(DEFAULT_GRAPHICS_QUALITY);
   const [volume, setVolume] = useState(75);
-  const [cameraView, setCameraView] = useState<"chase" | "forward">("chase");
+  const cameraView = telemetry.cameraView;
+  const isIslandView = cameraView === "island";
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -53,7 +63,6 @@ export function App() {
         }
 
         session = new GameSession(renderer.engine, renderer.backend, setTelemetry);
-        session.setCameraView(cameraView);
         sessionRef.current = session;
         const activeRenderer = renderer;
         const activeSession = session;
@@ -65,10 +74,11 @@ export function App() {
         window.addEventListener("resize", handleResize);
         setStatus({ state: "ready", backend: renderer.backend });
       } catch (error) {
+        console.error("Game initialization failed:", error);
         session?.dispose();
         renderer?.engine.dispose();
         if (disposed) return;
-        const message = error instanceof Error ? error.message : "Unknown initialization error";
+        const message = error instanceof Error ? error.message : String(error);
         setStatus({ state: "error", message });
       }
     };
@@ -93,14 +103,24 @@ export function App() {
   const toggleCameraView = () => {
     const next = cameraView === "chase" ? "forward" : "chase";
     sessionRef.current?.setCameraView(next);
-    setCameraView(next);
+  };
+
+  const toggleMissileTracking = () => {
+    const next = cameraView === "missile" ? "chase" : "missile";
+    sessionRef.current?.setCameraView(next);
   };
 
   const heading = String(Math.round(telemetry.headingDegrees) % 360).padStart(3, "0");
+  const missileFlightStatus = telemetry.missiles.phase === "boost" ? "Vertical climb"
+    : telemetry.missiles.phase === "turn" ? "Turning to course"
+    : telemetry.missiles.phase === "cruise" ? "Cruising outbound"
+    : telemetry.missiles.phase === "expired" ? "Flight complete"
+    : "Launchers ready";
+  const missileCoolingDown = telemetry.missiles.cooldownSeconds > 0;
 
   return (
-    <main className="game-shell">
-      <canvas ref={canvasRef} className="render-canvas" aria-label="Third-person naval sea trial" />
+    <main className={`game-shell${isIslandView ? " island-view" : ""}`}>
+      <canvas ref={canvasRef} className="render-canvas" aria-label={isIslandView ? "North Watch opponent island base, orbit and zoom view" : "Third-person naval sea trial"} />
 
       <header className="identity-panel hud-panel">
         <div className="brand-mark" aria-hidden="true">
@@ -109,8 +129,8 @@ export function App() {
           <span />
         </div>
         <div className="identity-copy">
-          <p className="eyebrow">Arleigh Burke class · DDG 96</p>
-          <h1>Destroyer Sea Trial</h1>
+          <p className="eyebrow">{isIslandView ? "Opposing forces · Island base" : "Arleigh Burke class · DDG 96"}</p>
+          <h1>{isIslandView ? "North Watch" : "Destroyer Sea Trial"}</h1>
         </div>
         <div className="renderer-status" role="status" aria-live="polite">
           <span className={`status-indicator status-${status.state}`} />
@@ -120,18 +140,55 @@ export function App() {
         </div>
       </header>
 
-      <button
-        type="button"
-        className="camera-toggle hud-panel"
-        aria-pressed={cameraView === "forward"}
-        disabled={status.state !== "ready"}
-        onClick={toggleCameraView}
-      >
-        <span aria-hidden="true">{cameraView === "forward" ? "◉" : "◎"}</span>
-        {cameraView === "forward" ? "Return to chase view" : "Forward gun view"}
-      </button>
+      <nav className="nav-actions" aria-label="World navigation">
+        {isIslandView ? <button
+          type="button"
+          className="camera-toggle hud-panel"
+          disabled={status.state !== "ready"}
+          onClick={() => sessionRef.current?.resetIslandView()}
+          title="Center the island and restore its overview"
+        >
+          <span aria-hidden="true">↺</span>
+          Reset island view
+        </button> : <button
+          type="button"
+          className="camera-toggle hud-panel"
+          aria-pressed={cameraView !== "chase"}
+          disabled={status.state !== "ready"}
+          onClick={toggleCameraView}
+        >
+          <span aria-hidden="true">{cameraView !== "chase" ? "◉" : "◎"}</span>
+          {cameraView !== "chase" ? "Return to chase view" : "Forward gun view"}
+        </button>}
+        <button
+          type="button"
+          className="island-view-button hud-panel"
+          aria-pressed={isIslandView}
+          disabled={status.state !== "ready"}
+          onClick={() => {
+            if (isIslandView) sessionRef.current?.setCameraView("chase");
+            else sessionRef.current?.viewIsland();
+          }}
+          title={isIslandView ? "Resume the destroyer's camera and controls" : "Control the North Watch island camera"}
+        >
+          <span aria-hidden="true">⌖</span>
+          {isIslandView ? "Return to ship" : "View island"}
+        </button>
+      </nav>
 
-      <section className="speed-panel hud-panel" aria-label="Destroyer instrumentation">
+      {isIslandView ? <section className="island-panel hud-panel" aria-label="North Watch island base">
+        <div className="panel-title">
+          <span className="eyebrow">Opponent base</span>
+          <span className="base-control-status"><span aria-hidden="true" />Camera active</span>
+        </div>
+        <h2>North Watch</h2>
+        <p className="island-description">Cliff-lined headlands surrounding a sheltered turquoise lagoon.</p>
+        <div className="island-facts">
+          <div><span className="metric-label">Terrain</span><strong>Rocky highlands</strong></div>
+          <div><span className="metric-label">Coast</span><strong>Sheltered lagoon</strong></div>
+        </div>
+        <p className="island-camera-note">Independent island camera</p>
+      </section> : <section className="speed-panel hud-panel" aria-label="Destroyer instrumentation">
         <div className="speed-reading">
           <span className="metric-label">Speed</span>
           <div>
@@ -153,7 +210,7 @@ export function App() {
           <span style={{ width: `${Math.min(100, Math.abs(telemetry.throttlePercent))}%`, background: telemetry.throttlePercent < 0 ? "#eeac75" : undefined }} />
         </div>
         <div className="voyage-reading"><span>Log {(telemetry.distanceMeters / 1852).toFixed(2)} nm</span><span>Rudder {Math.abs(telemetry.rudderDegrees).toFixed(0)}°{Math.abs(telemetry.rudderDegrees) < .5 ? "" : telemetry.rudderDegrees < 0 ? " P" : " S"}</span></div>
-      </section>
+      </section>}
 
       <aside className="performance-panel hud-panel" aria-label="Development performance metrics">
         <div className="panel-title">
@@ -195,7 +252,46 @@ export function App() {
         </div>
       </aside>
 
+      {!isIslandView && <section className="missile-panel hud-panel" aria-label="Cruise missile launchers">
+        <div className="panel-title">
+          <span className="eyebrow">Cruise missiles</span>
+          <span className={`missile-readiness${missileCoolingDown ? " is-cooling" : ""}`}>
+            {status.state !== "ready" ? "Standby" : missileCoolingDown ? `${telemetry.missiles.cooldownSeconds.toFixed(1)}s` : "Ready"}
+          </span>
+        </div>
+        <div className="missile-launchers">
+          <button type="button" className="missile-launch-button"
+            disabled={status.state !== "ready" || missileCoolingDown || telemetry.missiles.forwardRemaining === 0}
+            onClick={() => sessionRef.current?.launchMissile("forward")}>
+            <span><strong>Launch forward</strong><small>{telemetry.missiles.forwardRemaining} / 32 missiles</small></span>
+            <kbd>R</kbd>
+          </button>
+          <button type="button" className="missile-launch-button"
+            disabled={status.state !== "ready" || missileCoolingDown || telemetry.missiles.aftRemaining === 0}
+            onClick={() => sessionRef.current?.launchMissile("aft")}>
+            <span><strong>Launch aft</strong><small>{telemetry.missiles.aftRemaining} / 64 missiles</small></span>
+            <kbd>T</kbd>
+          </button>
+        </div>
+        <div className="missile-flight-status">
+          <span role="status" aria-live="polite">{missileFlightStatus}</span>
+          <span>{telemetry.missiles.activeMissiles > 0 ? `${telemetry.missiles.activeMissiles} airborne` : ""}</span>
+          <button type="button" className="missile-track-button"
+            aria-pressed={cameraView === "missile"}
+            disabled={status.state !== "ready" || (cameraView !== "missile" && telemetry.missiles.activeMissiles === 0)}
+            onClick={toggleMissileTracking}>
+            {cameraView === "missile" ? "Stop tracking" : "Track launch"}
+          </button>
+        </div>
+      </section>}
+
       <footer className="control-panel hud-panel">
+        {isIslandView ? <>
+          <div className="control-hint"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>Pan</span></div>
+          <div className="control-hint"><kbd>←</kbd><kbd>↑</kbd><kbd>↓</kbd><kbd>→</kbd><span>Pan</span></div>
+          <span className="hint-divider" />
+          <span className="mouse-hint island-mouse-hint">Drag to orbit · Scroll to zoom · Right-drag to pan</span>
+        </> : <>
         <div className="control-hint"><kbd>W</kbd><span>Throttle</span></div>
         <div className="control-hint"><kbd>S</kbd><span>Astern / brake</span></div>
         <div className="control-hint"><kbd>A</kbd><kbd>D</kbd><span>Rudder</span></div>
@@ -204,8 +300,9 @@ export function App() {
         <div className="control-hint"><kbd>H</kbd><span>Ship horn</span></div>
         <span className="hint-divider" />
         <span className="mouse-hint">
-          {cameraView === "chase" ? "Drag to look · Scroll to zoom" : "↑ / ↓ elevation · ← / → traverse · Space fire"} · Click or steer to start audio
+          {cameraView === "missile" ? "Following latest missile" : cameraView === "chase" ? "Drag to look · Scroll to zoom" : "↑ / ↓ elevation · ← / → traverse · Space fire"} · Click or steer to start audio
         </span>
+        </>}
       </footer>
 
       {status.state === "error" && (
