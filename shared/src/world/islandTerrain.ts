@@ -5,6 +5,13 @@ export const ISLAND_RADIUS_Z = 275;
 export const ISLAND_SEABED_Y = -28;
 export const ISLAND_BASE = Object.freeze({ x: -270, z: 40 });
 export const ISLAND_LAGOON = Object.freeze({ x: -15, z: -180, radiusX: 315, radiusZ: 155 });
+/** Small summit terraces, inset from the exposed cliff rims. */
+export const ISLAND_HILL_POSTS = Object.freeze([
+  Object.freeze({ id: "ridge", x: 250, z: 128, halfX: 30, halfZ: 25 }),
+  Object.freeze({ id: "cape", x: 416, z: 42, halfX: 30, halfZ: 25 }),
+]);
+/** Separate aviation clearing east of the lower compound's fence. */
+export const ISLAND_HELIPAD = Object.freeze({ x: -133, z: 40, halfX: 31, halfZ: 31 });
 
 /** Angle uses atan2(z / radiusZ, x / radiusX); the result is an elliptical radius. */
 export function islandShoreRadius(angle: number): number {
@@ -31,7 +38,15 @@ export function islandHeight(x: number, z: number): number {
   // A small cut-and-fill terrace, eased back into the hillside outside its walls.
   const terraceEdge = Math.max(Math.abs(x - ISLAND_BASE.x) - 78, Math.abs(z - ISLAND_BASE.z) - 60);
   const terraceBlend = 1 - smoothStep(0, 42, terraceEdge);
-  return natural + (naturalIslandHeight(ISLAND_BASE.x, ISLAND_BASE.z) - natural) * terraceBlend;
+  let height = natural + (naturalIslandHeight(ISLAND_BASE.x, ISLAND_BASE.z) - natural) * terraceBlend;
+  for (const terrace of ISLAND_HILL_POSTS) {
+    const edge = Math.max(Math.abs(x - terrace.x) - terrace.halfX, Math.abs(z - terrace.z) - terrace.halfZ);
+    if (edge < 14) height += (naturalIslandHeight(terrace.x, terrace.z) - height) * (1 - smoothStep(0, 14, edge));
+  }
+  const padEdge = Math.max(Math.abs(x - ISLAND_HELIPAD.x) - ISLAND_HELIPAD.halfX,
+    Math.abs(z - ISLAND_HELIPAD.z) - ISLAND_HELIPAD.halfZ);
+  if (padEdge < 12) height += (naturalIslandHeight(ISLAND_HELIPAD.x, ISLAND_HELIPAD.z) - height) * (1 - smoothStep(0, 12, padEdge));
+  return height;
 }
 
 function naturalIslandHeight(x: number, z: number): number {

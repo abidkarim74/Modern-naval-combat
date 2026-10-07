@@ -11,7 +11,8 @@ import { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial.js';
 import { FollowCamera } from '@babylonjs/core/Cameras/followCamera.js';
 import { FreeCamera } from '@babylonjs/core/Cameras/freeCamera.js';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
-import { BoatSimulation, ISLAND_BASE } from '@naval/shared';
+import { BoatSimulation, ISLAND_BASE, ISLAND_CENTER, ISLAND_HILL_POSTS, ISLAND_HELIPAD, islandHeight } from '@naval/shared';
+import { Ray } from '@babylonjs/core/Culling/ray.js';
 
 async function loadProductionSource(path) {
   const source = await readFile(new URL(path, import.meta.url), 'utf8');
@@ -205,6 +206,66 @@ test('island construction succeeds with instanced trees and upward terrain and r
   assert.ok(baseHeights.length > 0);
   assert.ok(Math.max(...baseHeights) - Math.min(...baseHeights) < 1e-4,
     'the outpost must stand on a level terrace');
+});
+
+test('summit facilities sit on both hills and the relocated helipad clears the lower compound', t => {
+  const scene = fixture(t);
+  const island = createIsland(scene);
+  for (const post of ISLAND_HILL_POSTS) {
+    const meshes = scene.meshes.filter(mesh => mesh.metadata?.facility === `hill-${post.id}`);
+    assert.ok(meshes.length > 0 && meshes.length <= 10, 'each detailed post must use a small number of material batches');
+    const features = new Set(meshes.flatMap(mesh => mesh.metadata.sourceNames));
+    for (const feature of ['operations-walls', 'utility-walls', 'watchtower-stair-tread', 'watchtower-cross-brace', 'watchtower-window-glass', 'fence-wire']) {
+      assert.ok(features.has(`hill-${post.id}-${feature}`), `post is missing ${feature}`);
+    }
+    const bounds = meshes.map(mesh => mesh.getBoundingInfo().boundingBox);
+    const minimumX = Math.min(...bounds.map(box => box.minimumWorld.x));
+    const maximumX = Math.max(...bounds.map(box => box.maximumWorld.x));
+    const minimumY = Math.min(...bounds.map(box => box.minimumWorld.y));
+    const maximumY = Math.max(...bounds.map(box => box.maximumWorld.y));
+    assert.ok(Math.abs((minimumX + maximumX) / 2 - ISLAND_CENTER.x - post.x) < .1,
+      'batching must apply the island world translation exactly once');
+    const ground = islandHeight(post.x, post.z);
+    assert.ok(minimumY >= ground - 1 && minimumY <= ground + .1, 'foundations meet the summit terrace');
+    assert.ok(maximumY > ground + 16 && maximumY < ground + 21, 'the tower stands above the post at a plausible scale');
+  }
+  const pad = scene.meshes.find(mesh => mesh.metadata?.sourceNames?.includes('outpost-helipad'));
+  assert.ok(pad, 'one relocated landing pad exists');
+  const padBounds = pad.getBoundingInfo().boundingBox;
+  assert.ok(Math.abs(padBounds.centerWorld.x - ISLAND_CENTER.x - ISLAND_HELIPAD.x) < .01);
+  assert.ok(padBounds.minimumWorld.x > ISLAND_CENTER.x + ISLAND_BASE.x + 71 + 20,
+    'the rotor area is clear of the compound fence');
+  assert.ok(pad.material.zOffset < 0, 'the pad surface retains depth separation in the overview');
+  const painted = scene.meshes.find(mesh => mesh.metadata?.sourceNames?.includes('helipad-detail-H-crossbar'));
+  assert.ok(painted.material.zOffset < pad.material.zOffset, 'paint stays visible above the landing surface');
+  assert.ok(island.shadowCasters.length <= 100, 'island shadow submission stays bounded');
+  const triangles = scene.meshes.filter(mesh => mesh.getClassName() !== 'InstancedMesh')
+    .reduce((sum, mesh) => sum + mesh.getTotalIndices() / 3, 0);
+  assert.ok(triangles < 100_000, `static island geometry grew beyond its budget: ${triangles}`);
+  assert.ok(scene.getTransformNodeByName('north-watch-island').isWorldMatrixFrozen);
+  assert.ok(scene.meshes.every(mesh => mesh.isWorldMatrixFrozen), 'static island transforms do no recurring matrix work');
+});
+
+test('hill access paths clear the actual terrain triangles on steep slopes', t => {
+  const scene = fixture(t);
+  createIsland(scene);
+  const terrain = scene.getMeshByName('north-watch-island-terrain');
+  for (const name of ['hill-access-path-0', 'hill-access-path-1']) {
+    const path = scene.getMeshByName(name);
+    const positions = path.getVerticesData('position');
+    const indices = path.getIndices();
+    for (let index = 0; index < indices.length; index += Math.ceil(indices.length / 30 / 3) * 3) {
+      const triangle = indices.slice(index, index + 3);
+      const center = Vector3.Zero();
+      for (const vertex of triangle) center.addInPlace(new Vector3(...positions.slice(vertex * 3, vertex * 3 + 3)));
+      center.scaleInPlace(1 / 3);
+      const ray = new Ray(new Vector3(center.x + ISLAND_CENTER.x, 400, center.z + ISLAND_CENTER.z), new Vector3(0, -1, 0), 500);
+      const hit = scene.pickWithRay(ray, mesh => mesh === terrain);
+      assert.ok(hit?.hit, 'the service path stays over land');
+      assert.ok(center.y > hit.pickedPoint.y, `${name} is buried in the rendered cliff face`);
+      assert.ok(center.y - hit.pickedPoint.y < 1, `${name} floats above the ground`);
+    }
+  }
 });
 
 test('viewing the island switches control without moving or resetting any ship state', t => {
