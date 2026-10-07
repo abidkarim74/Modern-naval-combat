@@ -12,7 +12,9 @@ export class IslandCamera {
     this.camera = new ArcRotateCamera("north-watch-island-camera", -1.95, 1.04, 1_250,
       new Vector3(ISLAND_CENTER.x, 85, ISLAND_CENTER.z), scene);
     this.camera.inputs.removeByType("ArcRotateCameraKeyboardMoveInput");
-    this.camera.lowerRadiusLimit = 55;
+    this.camera.lowerRadiusLimit = 12;
+    this.camera.checkCollisions = true;
+    this.camera.collisionRadius = new Vector3(.65, .9, .65);
     this.camera.upperRadiusLimit = Math.max(1_850, this.overviewRadius() * 1.3);
     this.camera.lowerBetaLimit = .14;
     this.camera.upperBetaLimit = Math.PI / 2 - .045;
@@ -39,7 +41,12 @@ export class IslandCamera {
     this.camera.radius = this.overviewRadius();
     this.camera.upperRadiusLimit = Math.max(1_850, this.camera.radius * 1.3);
     this.camera.target.set(ISLAND_CENTER.x, 85, ISLAND_CENTER.z);
+    // Reset is an intentional jump to the overview, which must finish even
+    // when the inspection camera starts beside a tree or inside a courtyard.
+    const collisions = this.camera.checkCollisions;
+    this.camera.checkCollisions = false;
     this.camera.getViewMatrix(true);
+    this.camera.checkCollisions = collisions;
   }
 
   update(input: ControlInput, delta: number): void {
@@ -68,7 +75,10 @@ export class IslandCamera {
     // Close inspection tracks the ground. The overview aims at the island's
     // whole volume, keeping its beach and pier inside the frame as well.
     const ground = islandHeight(target.x - ISLAND_CENTER.x, target.z - ISLAND_CENTER.z);
-    const inspectionFloor = Math.max(12, ground + 14);
+    const closeBlend = Math.max(0, Math.min(1, (this.camera.radius - 12) / 43));
+    const targetClearance = 2.5 + closeBlend * 11.5;
+    const eyeClearance = 1.8 + closeBlend * 8.2;
+    const inspectionFloor = Math.max(3 + closeBlend * 9, ground + targetClearance);
     const overviewBlend = Math.max(0, Math.min(1, (this.camera.radius - 750) / 500));
     const targetFloor = inspectionFloor + (Math.min(85, inspectionFloor) - inspectionFloor) * overviewBlend;
     if (target.y < targetFloor) target.y = targetFloor;
@@ -83,7 +93,7 @@ export class IslandCamera {
       const reach = radius * Math.sin(beta);
       const x = target.x + axisX * reach - ISLAND_CENTER.x;
       const z = target.z + axisZ * reach - ISLAND_CENTER.z;
-      return target.y + radius * Math.cos(beta) - Math.max(8, islandHeight(x, z) + 10);
+      return target.y + radius * Math.cos(beta) - Math.max(2 + closeBlend * 6, islandHeight(x, z) + eyeClearance);
     };
     if (clearanceAt(this.camera.beta) >= 0) return;
 

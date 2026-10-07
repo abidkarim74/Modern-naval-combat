@@ -235,6 +235,7 @@ export class GameSession {
     activeCamera.getDirectionToRef(Axis.Z, this.audioListenerForward);
     this.audioListenerForward.normalize();
     const listenerPosition = activeCamera.globalPosition;
+    this.island.update(listenerPosition, renderTime);
     const birdFocusHeight = listenerPosition.y + this.audioListenerForward.y * 32;
     this.ambientSprites.update(renderTime, listenerPosition.x, listenerPosition.z,
       Math.atan2(this.audioListenerForward.x, this.audioListenerForward.z), birdFocusHeight);
@@ -311,6 +312,7 @@ export class GameSession {
     this.ambientSprites.setQuality(settings);
     this.sky.setQuality(settings, this.cameraView === "island" ? this.island.shadowCasters : this.boat.shadowCasters);
     this.missiles.setQuality(quality);
+    this.island.setQuality(quality);
     this.camera.maxZ = settings.viewDistanceMeters;
     this.forwardCamera.maxZ = settings.viewDistanceMeters;
     this.missileCamera.maxZ = settings.viewDistanceMeters;

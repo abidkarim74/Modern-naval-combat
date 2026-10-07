@@ -7,10 +7,15 @@ import { CreateBox } from "@babylonjs/core/Meshes/Builders/boxBuilder";
 import { CreateCylinder } from "@babylonjs/core/Meshes/Builders/cylinderBuilder";
 import { CreateSphere } from "@babylonjs/core/Meshes/Builders/sphereBuilder";
 import { Mesh } from "@babylonjs/core/Meshes/mesh";
+import { SubMesh } from "@babylonjs/core/Meshes/subMesh";
 import "@babylonjs/core/Meshes/instancedMesh";
 import { VertexData } from "@babylonjs/core/Meshes/mesh.vertexData";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import type { Scene } from "@babylonjs/core/scene";
+import "@babylonjs/core/Collisions/collisionCoordinator";
+import "@babylonjs/core/Culling/Octrees/octreeSceneComponent";
+import { createIslandNature, type IslandNature } from "./createIslandNature";
+import { islandDetailTexture } from "./islandDetailTextures";
 
 export { ISLAND_CENTER } from "@naval/shared";
 
@@ -25,11 +30,12 @@ const HILL_PATHS: readonly (readonly [number, number][])[] = [
   [[248, 104], [275, 97], [293, 109], [306, 80], [330, 105], [350, 61], [373, 86], [390, 48], [414, 18]],
 ];
 
-export interface IslandVisual {
+export interface IslandVisual extends IslandNature {
   readonly shadowCasters: readonly Mesh[];
 }
 
 export function createIsland(scene: Scene): IslandVisual {
+  scene.collisionsEnabled = true;
   const root = new TransformNode("north-watch-island", scene);
   root.position.set(ISLAND_CENTER.x, 0, ISLAND_CENTER.z);
   const casters: Mesh[] = [];
@@ -44,6 +50,9 @@ export function createIsland(scene: Scene): IslandVisual {
   const terrainMaterial = new StandardMaterial("north-watch-terrain-material", scene);
   terrainMaterial.diffuseColor = Color3.White();
   terrainMaterial.specularColor = new Color3(.035, .045, .04);
+  terrainMaterial.diffuseTexture = islandDetailTexture(scene, "ground");
+  terrainMaterial.bumpTexture = islandDetailTexture(scene, "ground", true);
+  terrainMaterial.bumpTexture.level = .25;
   const rock = paint("island-weathered-basalt", "#686354", .99, 0);
   rock.environmentIntensity = .3;
   const concrete = paint("outpost-concrete", "#747d7b", .9);
@@ -54,12 +63,10 @@ export function createIsland(scene: Scene): IslandVisual {
   const glass = paint("outpost-window-glass", "#183944", .28, .3);
   const white = paint("outpost-markings", "#d5d4c5", .9);
   const olive = paint("outpost-vehicle-olive", "#525b48", .88);
-  const foliage = paint("island-tropical-canopy", "#345b31", 1);
-  const lightFoliage = paint("island-tropical-canopy-light", "#50773c", 1);
   const palmLeaves = paint("island-palm-fronds", "#527c3c", 1);
   palmLeaves.backFaceCulling = false;
   const trunk = paint("island-tropical-bark", "#625340", 1);
-  for (const material of [foliage, lightFoliage, palmLeaves, trunk]) {
+  for (const material of [palmLeaves, trunk]) {
     material.environmentIntensity = .35;
     material.metallic = 0;
   }
@@ -100,25 +107,36 @@ export function createIsland(scene: Scene): IslandVisual {
   for (let index = 0; index < HILL_PATHS.length; index++) {
     addTerrainPath(scene, root, casters, `hill-access-path-${index}`, HILL_PATHS[index], 2.1, trail, terrainSurface);
   }
-  addTrees(scene, root, casters, foliage, lightFoliage, palmLeaves, trunk);
-  addRockOutcrops(scene, root, casters, rock);
+  const nature = createIslandNature(scene, root, casters, terrainSurface.sample, clearVegetationSite, trunk, rock);
+  addPalms(scene, root, casters, palmLeaves, trunk, terrainSurface);
   batchBaseDetails(root, casters);
   // The island and all its fittings are static. Freeze transforms after merging,
   // while keeping materials responsive to the existing shadow quality settings.
   root.freezeWorldMatrix();
-  for (const mesh of root.getChildMeshes()) mesh.freezeWorldMatrix();
+  for (const mesh of root.getChildMeshes()) {
+    // Solid static scenery participates in swept camera collision. Foliage and
+    // fine rail/wire details stay visual; they do not need thousands of bodies.
+    if (!/island-(leaf|broadleaf-canopy|understory|nearby-grass|grass-tuft|palm-fronds)/.test(mesh.name)) {
+      mesh.checkCollisions = true;
+    }
+    mesh.freezeWorldMatrix();
+  }
+  terrain.checkCollisions = false;
+  addTerrainCollision(scene, root, terrain);
 
   // Fine wire is visible in the main pass, but contributes no useful soft
   // shadow at this scale. Keep it out of the recurring shadow render pass.
-  return { shadowCasters: casters.filter(mesh => mesh.receiveShadows) };
+  return { ...nature, shadowCasters: casters.filter(mesh => mesh.receiveShadows) };
 }
 
 function createTerrain(scene: Scene, root: TransformNode, material: StandardMaterial): Mesh {
   const positions: number[] = [];
   const colors: number[] = [];
+  const uvs: number[] = [];
   const indices: number[] = [];
   const vertex = (x: number, z: number, height = islandHeight(x, z)) => {
     positions.push(x, height, z);
+    uvs.push(x / 6, z / 6);
     const angle = Math.atan2(z / ISLAND_RADIUS_Z, x / ISLAND_RADIUS_X);
     const distance = islandShoreRadius(angle) - Math.hypot(x / ISLAND_RADIUS_X, z / ISLAND_RADIUS_Z);
     const slope = Math.hypot(islandHeight(x + 2, z) - islandHeight(x - 2, z), islandHeight(x, z + 2) - islandHeight(x, z - 2)) / 4;
@@ -174,6 +192,7 @@ function createTerrain(scene: Scene, root: TransformNode, material: StandardMate
   vertexData.indices = indices;
   vertexData.normals = normals;
   vertexData.colors = colors;
+  vertexData.uvs = uvs;
   vertexData.applyToMesh(mesh, false);
   mesh.material = material;
   mesh.useVertexColors = true;
@@ -187,10 +206,62 @@ function smoothStep(minimum: number, maximum: number, value: number): number {
   return t * t * (3 - 2 * t);
 }
 
+/** Keep terrain rendering in one draw. The invisible collision surface uses
+ * the identical triangles partitioned into spatial cells, so a close camera
+ * checks only a few hundred triangles rather than the whole island. */
+function addTerrainCollision(scene: Scene, root: TransformNode, terrain: Mesh): void {
+  const positions = terrain.getVerticesData("position")!;
+  const original = terrain.getIndices()!;
+  const groups = new Map<string, number[]>();
+  for (let i = 0; i < original.length; i += 3) {
+    const a = original[i] * 3, b = original[i + 1] * 3, c = original[i + 2] * 3;
+    const x = (positions[a] + positions[b] + positions[c]) / 3;
+    const z = (positions[a + 2] + positions[b + 2] + positions[c + 2]) / 3;
+    const key = Math.floor(x / 48) + ":" + Math.floor(z / 48);
+    const group = groups.get(key) ?? [];
+    group.push(original[i], original[i + 1], original[i + 2]);
+    groups.set(key, group);
+  }
+  const mesh = new Mesh("north-watch-terrain-collision", scene);
+  mesh.parent = root;
+  const collisionPositions: number[] = [], collisionIndices: number[] = [];
+  const ranges: { vertexStart: number; vertexCount: number; indexStart: number; indexCount: number }[] = [];
+  for (const group of groups.values()) {
+    const vertexStart = collisionPositions.length / 3, indexStart = collisionIndices.length;
+    const remap = new Map<number, number>();
+    for (const originalVertex of group) {
+      let vertex = remap.get(originalVertex);
+      if (vertex === undefined) {
+        vertex = collisionPositions.length / 3;
+        remap.set(originalVertex, vertex);
+        collisionPositions.push(positions[originalVertex * 3], positions[originalVertex * 3 + 1], positions[originalVertex * 3 + 2]);
+      }
+      collisionIndices.push(vertex);
+    }
+    ranges.push({ vertexStart, vertexCount: remap.size, indexStart, indexCount: group.length });
+  }
+  const data = new VertexData();
+  data.positions = collisionPositions;
+  data.indices = collisionIndices;
+  data.applyToMesh(mesh);
+  mesh.releaseSubMeshes();
+  for (const range of ranges) {
+    new SubMesh(0, range.vertexStart, range.vertexCount, range.indexStart, range.indexCount, mesh);
+  }
+  mesh.isVisible = false;
+  mesh.isPickable = false;
+  mesh.checkCollisions = true;
+  mesh.material = terrain.material;
+  mesh.freezeWorldMatrix();
+  mesh.createOrUpdateSubmeshesOctree(32, 3);
+  mesh.useOctreeForCollisions = true;
+}
+
 interface TerrainSurface {
   readonly positions: ArrayLike<number>;
   readonly indices: ArrayLike<number>;
   trianglesInBounds(minX: number, minZ: number, maxX: number, maxZ: number): Set<number>;
+  sample(x: number, z: number): { height: number; slope: number } | undefined;
 }
 
 /** Index the existing terrain triangles once so paths can be clipped directly
@@ -216,6 +287,22 @@ function createTerrainSampler(terrain: Mesh): TerrainSurface {
   }
   return {
     positions, indices,
+    sample(x, z) {
+      for (const triangle of cells.get(Math.floor(x / size) + ":" + Math.floor(z / size)) ?? []) {
+        const a = indices[triangle] * 3, b = indices[triangle + 1] * 3, c = indices[triangle + 2] * 3;
+        const bx = positions[b] - positions[a], bz = positions[b + 2] - positions[a + 2];
+        const cx = positions[c] - positions[a], cz = positions[c + 2] - positions[a + 2];
+        const det = bx * cz - bz * cx;
+        if (Math.abs(det) < 1e-9) continue;
+        const dx = x - positions[a], dz = z - positions[a + 2];
+        const u = (dx * cz - dz * cx) / det, v = (bx * dz - bz * dx) / det;
+        if (u < -1e-6 || v < -1e-6 || u + v > 1.000001) continue;
+        const by = positions[b + 1] - positions[a + 1], cy = positions[c + 1] - positions[a + 1];
+        return { height: positions[a + 1] + u * by + v * cy,
+          slope: Math.hypot((by * cz - cy * bz) / det, (bx * cy - cx * by) / det) };
+      }
+      return undefined;
+    },
     trianglesInBounds(minX, minZ, maxX, maxZ) {
       const triangles = new Set<number>();
       for (let x = Math.floor(minX / size); x <= Math.floor(maxX / size); x++) {
@@ -944,62 +1031,12 @@ function addSupplyVehicle(scene: Scene, root: TransformNode, casters: Mesh[], x:
   }
 }
 
-function addTrees(
-  scene: Scene, root: TransformNode, casters: Mesh[], leaves: PBRMaterial,
-  lightLeaves: PBRMaterial, palmLeaves: PBRMaterial, wood: PBRMaterial,
-): void {
-  const trunkParts = [CreateCylinder("tropical-trunk-part", { diameterBottom: 1.7, diameterTop: .68, height: 13, tessellation: 8 }, scene)];
-  trunkParts[0].position.y = 6.5;
-  for (const side of [-1, 1]) {
-    const branch = CreateCylinder("tropical-branch-part", { diameterBottom: .65, diameterTop: .18, height: 7.8, tessellation: 6 }, scene);
-    branch.position.set(side * 1.8, 10.2, .5);
-    branch.rotation.z = side * -.48;
-    trunkParts.push(branch);
-  }
-  const treeTrunk = Mesh.MergeMeshes(trunkParts, true, true)!;
-  prepareSource(treeTrunk, "island-broadleaf-trunk-source", root, wood, casters);
-  const crowns = [leaves, lightLeaves].map((material, index) => {
-    const source = CreateSphere(`island-broadleaf-crown-source-${index}`, { diameter: 12, segments: 8 }, scene);
-    roughenRock(source, index + 43, .16);
-    prepareSource(source, source.name, root, material, casters);
-    return source;
-  });
+function addPalms(scene: Scene, root: TransformNode, casters: Mesh[], palmLeaves: PBRMaterial,
+  wood: PBRMaterial, terrain: TerrainSurface): void {
   const palmTrunk = createPalmTrunk(scene);
   prepareSource(palmTrunk, "island-palm-trunk-source", root, wood, casters);
   const palmCrown = createPalmCrown(scene);
   prepareSource(palmCrown, "island-palm-fronds-source", root, palmLeaves, casters);
-
-  let treeIndex = 0;
-  // Jittered clusters around the foothills leave the beach, ridgelines and
-  // compound open. A moderate number of trees keeps the terrain readable.
-  const clusters: readonly [number, number, number][] = [
-    [-435, -48, 52], [-425, 91, 38], [-160, 70, 45], [-62, 110, 42],
-    [102, 93, 45], [210, -12, 35], [355, -78, 30],
-  ];
-  for (let cluster = 0; cluster < clusters.length; cluster++) {
-    const [centerX, centerZ, spread] = clusters[cluster];
-    for (let candidate = 0; candidate < 23; candidate++) {
-      const seed = cluster * 503 + candidate * 37 + 31;
-      const angle = pseudo(seed) * Math.PI * 2;
-      const radius = Math.sqrt(pseudo(seed + 1)) * spread;
-      const x = centerX + Math.cos(angle) * radius;
-      const z = centerZ + Math.sin(angle) * radius;
-      const y = islandHeight(x, z);
-      if (!clearVegetationSite(x, z) || y < 8 || y > 140 || terrainSlope(x, z) > 1.05) continue;
-      const scale = .7 + pseudo(seed + 2) * .64;
-      const yaw = pseudo(seed + 3) * Math.PI * 2;
-      addInstance(treeTrunk, root, `island-broadleaf-trunk-${treeIndex}`, x, y - .3, z, scale, scale, scale, yaw);
-      for (let lobe = 0; lobe < 3; lobe++) {
-        const direction = yaw + lobe / 3 * Math.PI * 2;
-        const crown = crowns[(candidate + lobe) % crowns.length];
-        addInstance(crown, root, `island-broadleaf-canopy-${treeIndex}-${lobe}`,
-          x + Math.cos(direction) * 2.5 * scale, y + (11.6 + lobe * .65) * scale,
-          z + Math.sin(direction) * 2.5 * scale, scale * .78, scale * (.5 + lobe * .06), scale * .75, yaw + lobe);
-      }
-      treeIndex++;
-    }
-  }
-
   let palmIndex = 0;
   for (let candidate = 0; candidate < 85; candidate++) {
     const seed = candidate * 101 + 29;
@@ -1007,7 +1044,7 @@ function addTrees(
     const radius = islandShoreRadius(angle) - .065 - pseudo(seed + 1) * .055;
     const x = Math.cos(angle) * radius * ISLAND_RADIUS_X;
     const z = Math.sin(angle) * radius * ISLAND_RADIUS_Z;
-    const y = islandHeight(x, z);
+    const y = terrain.sample(x, z)?.height ?? islandHeight(x, z);
     if (pseudo(seed + 6) < .43 || y < 4 || y > 36 || terrainSlope(x, z) > .6 || !clearVegetationSite(x, z)) continue;
     const scale = .8 + pseudo(seed + 2) * .42;
     const yaw = pseudo(seed + 3) * Math.PI * 2;
@@ -1017,18 +1054,6 @@ function addTrees(
     palmIndex++;
   }
 
-  for (let candidate = 0; candidate < 160; candidate++) {
-    const seed = 9_041 + candidate * 43;
-    const angle = pseudo(seed) * Math.PI * 2;
-    const radius = .5 + pseudo(seed + 1) * .43;
-    const x = Math.cos(angle) * radius * ISLAND_RADIUS_X;
-    const z = Math.sin(angle) * radius * ISLAND_RADIUS_Z;
-    const y = islandHeight(x, z);
-    if (y < 5 || y > 160 || !clearVegetationSite(x, z) || terrainSlope(x, z) > .9) continue;
-    const scale = .17 + pseudo(seed + 2) * .22;
-    addInstance(crowns[candidate % 2], root, `island-understory-shrub-${candidate}`, x, y + scale * 2, z,
-      scale, scale * .65, scale * .85, pseudo(seed + 3) * 6);
-  }
 }
 
 function prepareSource(mesh: Mesh, name: string, root: TransformNode, material: PBRMaterial, casters: Mesh[]): void {
@@ -1057,19 +1082,23 @@ function addInstance(
 function createPalmTrunk(scene: Scene): Mesh {
   const positions: number[] = [];
   const indices: number[] = [];
+  const uvs: number[] = [];
   for (let row = 0; row <= 18; row++) {
     const t = row / 18;
     const radius = .75 - t * .36 + (row % 2 === 0 ? .05 : 0);
     for (let segment = 0; segment < 8; segment++) {
       const angle = segment / 8 * Math.PI * 2;
       positions.push(Math.cos(angle) * radius + t * t * 1.4, t * 17, Math.sin(angle) * radius);
+      uvs.push(segment / 8 * 2, t * 5);
       if (row === 18) continue;
       const a = row * 8 + segment;
       const b = row * 8 + (segment + 1) % 8;
       indices.push(a, b, a + 8, b, b + 8, a + 8);
     }
   }
-  return createGeometry(scene, "island-palm-trunk-source", positions, indices);
+  const mesh = createGeometry(scene, "island-palm-trunk-source", positions, indices);
+  mesh.setVerticesData("uv", uvs);
+  return mesh;
 }
 
 function createPalmCrown(scene: Scene): Mesh {
@@ -1146,54 +1175,6 @@ function nearRoute(x: number, z: number, route: readonly [number, number][], cle
     if (Math.hypot(x - x1 - dx * t, z - z1 - dz * t) < clearance) return true;
   }
   return false;
-}
-
-function addRockOutcrops(scene: Scene, root: TransformNode, casters: Mesh[], material: PBRMaterial): void {
-  const sources = Array.from({ length: 3 }, (_, index) => {
-    const mesh = CreateSphere(`island-basalt-outcrop-source-${index}`, { diameter: 2, segments: 4 }, scene);
-    roughenRock(mesh, 113 + index * 17, .32);
-    prepareSource(mesh, mesh.name, root, material, casters);
-    return mesh;
-  });
-  // Half-buried broken ledges blend into the ridges without freestanding pillars.
-  const crags: readonly [number, number, number, number, number][] = [
-    [228, 145, 8, 3.8, 5], [261, 158, 6, 3.2, 4], [429, 43, 7, 4.2, 5],
-    [457, 31, 6, 3.5, 4], [-465, -53, 7, 3.2, 5], [-395, -102, 6, 3.6, 4],
-  ];
-  crags.forEach(([x, z, width, height, depth], index) => {
-    if (!clearVegetationSite(x, z)) return;
-    addInstance(sources[index % 3], root, `island-volcanic-crag-${index}`, x, islandHeight(x, z) + height * .15, z,
-      width, height, depth, index * .83);
-  });
-  for (let index = 0; index < 75; index++) {
-    const seed = index * 67 + 313;
-    const angle = pseudo(seed) * Math.PI * 2;
-    const coastal = index < 45;
-    const radius = coastal ? islandShoreRadius(angle) - .005 - pseudo(seed + 1) * .043 : .35 + pseudo(seed + 1) * .49;
-    const x = Math.cos(angle) * radius * ISLAND_RADIUS_X;
-    const z = Math.sin(angle) * radius * ISLAND_RADIUS_Z;
-    const y = islandHeight(x, z);
-    if (!clearVegetationSite(x, z) || y < 0) continue;
-    const scale = coastal ? 1.3 + pseudo(seed + 2) * 3.1 : 2.3 + pseudo(seed + 2) * 4.5;
-    addInstance(sources[index % 3], root, `island-coastal-boulder-${index}`, x, y + scale * .18, z,
-      scale, scale * (.48 + pseudo(seed + 3) * .45), scale * .83, pseudo(seed + 4) * 6);
-  }
-}
-
-function roughenRock(mesh: Mesh, seed: number, amount: number): void {
-  const positions = mesh.getVerticesData("position");
-  const indices = mesh.getIndices();
-  if (!positions || !indices) return;
-  for (let index = 0; index < positions.length; index += 3) {
-    const factor = 1 + amount * Math.sin(positions[index] * 2.3 + positions[index + 1] * 1.7 + positions[index + 2] * 3.1 + seed);
-    positions[index] *= factor;
-    positions[index + 1] *= factor;
-    positions[index + 2] *= factor;
-  }
-  const normals: number[] = [];
-  VertexData.ComputeNormals(positions, indices, normals);
-  mesh.setVerticesData("position", positions);
-  mesh.setVerticesData("normal", normals);
 }
 
 function batchBaseDetails(root: TransformNode, casters: Mesh[]): void {
