@@ -276,7 +276,9 @@ export function createIslandNature(scene: Scene, root: TransformNode, casters: M
     mesh.metadata = { nature: "grass", transient: true };
     patches.push({ mesh, key: "" });
   }
-  let range = 60, spacing = 1.4;
+  // Vertical reach is longer than the streamed footprint: overhead inspection
+  // retains grass without increasing the fixed patch pool or tuft density.
+  let range = 60, heightRange = 160, spacing = 1.4;
   const buildPatch = (patch: typeof patches[number], cx: number, cz: number) => {
     const matrices: number[] = [];
     const count = Math.floor(CELL / spacing);
@@ -297,12 +299,20 @@ export function createIslandNature(scene: Scene, root: TransformNode, casters: M
     patch.mesh.thinInstanceSetBuffer("matrix", new Float32Array(matrices), 16, true);
     patch.mesh.thinInstanceRefreshBoundingInfo();
     patch.mesh.freezeWorldMatrix();
-    patch.mesh.setEnabled(matrices.length > 0);
     patch.key = cx + ":" + cz;
+  };
+  const updatePatchVisibility = (patch: typeof patches[number], eye: Vector3) => {
+    const bounds = patch.mesh.getBoundingInfo().boundingBox;
+    // Cull only once every tuft is beyond the shader's vertical fade. Use each
+    // patch's actual terrain heights so nearby ridges and shorelines stay smooth.
+    patch.mesh.setEnabled(patch.mesh.thinInstanceCount > 0
+      && eye.y < bounds.maximumWorld.y + heightRange
+      && eye.y > bounds.minimumWorld.y - heightRange);
   };
   return {
     setQuality(quality) {
       range = quality === "High" ? 84 : quality === "Low" ? 30 : 60;
+      heightRange = quality === "High" ? 220 : quality === "Low" ? 100 : 160;
       spacing = quality === "High" ? 1.05 : quality === "Low" ? 2.5 : 1.4;
       for (const patch of patches) { patch.key = ""; patch.mesh.setEnabled(false); }
     },
@@ -310,9 +320,10 @@ export function createIslandNature(scene: Scene, root: TransformNode, casters: M
       leafWind.time = grassWind.time = time;
       leafWind.eye.copyFrom(eye); grassWind.eye.copyFrom(eye);
       grassWind.range = range;
+      grassWind.heightRange = heightRange;
       const x = eye.x - ISLAND_CENTER.x, z = eye.z - ISLAND_CENTER.z;
-      const ground = sample(x, z);
-      if (!ground || eye.y - ground.height > range * .8 || eye.y < ground.height - 2) {
+      if (Math.abs(x) > ISLAND_RADIUS_X * 1.12 + range + CELL
+        || Math.abs(z) > ISLAND_RADIUS_Z * 1.12 + range + CELL) {
         for (const patch of patches) patch.mesh.setEnabled(false);
         return;
       }
@@ -331,11 +342,12 @@ export function createIslandNature(scene: Scene, root: TransformNode, casters: M
       let builds = 0;
       for (const cell of wanted) {
         const patch = existing.get(cell.key);
-        if (patch) { patch.mesh.setEnabled(patch.mesh.thinInstanceCount > 0); continue; }
-        if (builds >= 2) break; // Bound uploads and terrain sampling during camera motion.
+        if (patch) { updatePatchVisibility(patch, eye); continue; }
+        if (builds >= 2) continue; // Bound uploads and terrain sampling during camera motion.
         const free = unused.pop();
         if (!free) break;
         buildPatch(free, cell.x, cell.z);
+        updatePatchVisibility(free, eye);
         builds++;
       }
     },

@@ -2,7 +2,7 @@ import { RawTexture } from "@babylonjs/core/Materials/Textures/rawTexture";
 import { Texture } from "@babylonjs/core/Materials/Textures/texture";
 import type { Scene } from "@babylonjs/core/scene";
 
-type DetailKind = "ground" | "bark" | "rock" | "leaf";
+type DetailKind = "ground" | "bark" | "rock" | "leaf" | "plaster";
 const cache = new Map<string, Uint8Array>();
 const SIZE = 256;
 const fract = (x: number) => x - Math.floor(x);
@@ -18,6 +18,9 @@ export function islandDetailTexture(scene: Scene, kind: DetailKind, normal = fal
       const grain = fract(Math.sin((x + SIZE) % SIZE * 127.1 + (y + SIZE) % SIZE * 311.7) * 43758.5453);
       if (kind === "bark") return .5 + .19 * Math.sin(u * Math.PI * 48 + Math.sin(v * Math.PI * 8) * .8)
         + .13 * Math.sin(u * Math.PI * 102 + Math.sin(v * Math.PI * 12)) + grain * .14;
+      if (kind === "plaster") return .38 + grain * .4
+        + .06 * Math.sin(u * Math.PI * 6 + Math.sin(v * Math.PI * 4))
+        + .04 * Math.sin(v * Math.PI * 8 + Math.sin(u * Math.PI * 6));
       return .40 + Math.sin(u * Math.PI * 14 + Math.sin(v * Math.PI * 10)) * .035
         + Math.sin(v * Math.PI * 28 + Math.sin(u * Math.PI * 8)) * .025 + grain * .40;
     };
@@ -42,6 +45,10 @@ export function islandDetailTexture(scene: Scene, kind: DetailKind, normal = fal
         data[index + 1] = shade * 214;
         data[index + 2] = shade * 120;
         data[index + 3] = edge < width && v > .01 && v < .99 ? 255 : 0;
+      } else if (kind === "plaster") {
+        const shade = .88 + h * .12;
+        data[index] = data[index + 1] = data[index + 2] = shade * 255;
+        data[index + 3] = 255;
       } else {
         const shade = .72 + h * .38;
         data[index] = shade * 236;

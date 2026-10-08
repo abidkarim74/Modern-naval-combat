@@ -14,4 +14,4 @@ export { BoatSimulation, BOAT_SIMULATION_CONFIG, FIXED_SIMULATION_STEP } from ".
 export type { BoatSimulationState, ControlInput } from "./simulation/boatSimulation.js";
 export { CruiseMissileSimulation } from "./simulation/cruiseMissileSimulation.js";
 export type { CruiseMissileLaunch, CruiseMissileState, MissileVector, MissileFlightPhase } from "./simulation/cruiseMissileSimulation.js";
-export { ISLAND_CENTER, ISLAND_RADIUS_X, ISLAND_RADIUS_Z, ISLAND_SEABED_Y, ISLAND_BASE, ISLAND_HILL_POSTS, ISLAND_HELIPAD, ISLAND_HARBOR, ISLAND_LAGOON, ISLAND_DOCK_OBSTACLES, islandShoreRadius, islandHeight } from "./world/islandTerrain.js";
+export { ISLAND_CENTER, ISLAND_RADIUS_X, ISLAND_RADIUS_Z, ISLAND_SEABED_Y, ISLAND_BASE, ISLAND_HILL_POSTS, ISLAND_HELIPAD, ISLAND_RADAR_SITE, ISLAND_BEREG_SITES, ISLAND_HARBOR, ISLAND_LAGOON, ISLAND_DOCK_OBSTACLES, islandShoreRadius, islandHeight } from "./world/islandTerrain.js";

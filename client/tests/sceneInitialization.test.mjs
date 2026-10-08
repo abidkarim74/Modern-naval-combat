@@ -11,7 +11,7 @@ import { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial.js';
 import { FollowCamera } from '@babylonjs/core/Cameras/followCamera.js';
 import { FreeCamera } from '@babylonjs/core/Cameras/freeCamera.js';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
-import { BoatSimulation, ISLAND_BASE, ISLAND_CENTER, ISLAND_HILL_POSTS, ISLAND_HELIPAD, islandHeight } from '@naval/shared';
+import { BoatSimulation, ISLAND_BASE, ISLAND_CENTER, ISLAND_HILL_POSTS, ISLAND_HELIPAD, ISLAND_RADAR_SITE, islandHeight } from '@naval/shared';
 import { Ray } from '@babylonjs/core/Culling/ray.js';
 
 const sourceModules = new Map();
@@ -40,6 +40,7 @@ async function loadProductionSource(path) {
 
 const { mergeStaticMeshes } = await loadProductionSource('../src/ships/mergeStaticMeshes.ts');
 const { createIsland } = await loadProductionSource('../src/world/createIsland.ts');
+const { createIslandNature } = await loadProductionSource('../src/world/createIslandNature.ts');
 const { IslandCamera } = await loadProductionSource('../src/game/IslandCamera.ts');
 const { BoatKeyboardInput } = await loadProductionSource('../src/game/BoatKeyboardInput.ts');
 const { GRAPHICS_QUALITY_SETTINGS } = await loadProductionSource('../src/game/graphicsQuality.ts');
@@ -252,10 +253,13 @@ test('summit facilities sit on both hills and the relocated helipad clears the l
   assert.ok(painted.material.zOffset < pad.material.zOffset, 'paint stays visible above the landing surface');
   assert.ok(island.shadowCasters.length <= 100, 'island shadow submission stays bounded');
   // Count render geometry; the invisible terrain collision proxy adds no draw.
-  // The 64 grass tuft meshes and all mutually exclusive tree LODs fit this cap.
+  // Includes the detailed checkpoint, buildings, 8x8 radar, 64 grass source
+  // patches and all mutually exclusive tree LODs, excluding collision proxies.
   const triangles = scene.meshes.filter(mesh => mesh.isVisible && mesh.getClassName() !== 'InstancedMesh')
     .reduce((sum, mesh) => sum + mesh.getTotalIndices() / 3, 0);
-  assert.ok(triangles < 110_000, `static island geometry grew beyond its budget: ${triangles}`);
+  // Includes four shared 9k-triangle Bereg copies and their graded aprons/access
+  // tracks, in addition to the compound, radar, summit posts and nature LODs.
+  assert.ok(triangles < 190_000, `static island geometry grew beyond its budget: ${triangles}`);
   assert.ok(scene.getTransformNodeByName('north-watch-island').isWorldMatrixFrozen);
   assert.ok(scene.meshes.every(mesh => mesh.isWorldMatrixFrozen), 'static island transforms do no recurring matrix work');
 });
@@ -280,6 +284,94 @@ test('hill access paths clear the actual terrain triangles on steep slopes', t =
       assert.ok(center.y - hit.pickedPoint.y < 1, `${name} floats above the ground`);
     }
   }
+});
+
+test('the detailed compound has open road-aligned gates and the radar sits outside its perimeter', t => {
+  const scene = fixture(t);
+  const island = createIsland(scene);
+  const compound = scene.meshes.filter(mesh => mesh.metadata?.facility === 'main-compound');
+  assert.ok(compound.length > 0 && compound.length <= 12, 'compound details must share a bounded number of batches');
+  const features = new Set(compound.flatMap(mesh => mesh.metadata.sourceNames));
+  for (const feature of ['outpost-main-gate-vertical-steel-slat', 'outpost-main-gate-barrier-red-stripe',
+    'outpost-main-gate-approach-ramp', 'outpost-north-service-gate-slat', 'naval-command-house-standing-roof-seam',
+    'island-barracks-individual-window-frame', 'maintenance-shed-rain-downspout']) {
+    assert.ok(features.has(feature), `compound is missing ${feature}`);
+  }
+  const baseY = islandHeight(ISLAND_BASE.x, ISLAND_BASE.z) + 3.4;
+  for (const [x, z] of [[-300, -12], [-275, 92]]) {
+    const ray = new Ray(new Vector3(ISLAND_CENTER.x + x, baseY + 1.5, ISLAND_CENTER.z + z - 2.5),
+      new Vector3(0, 0, 1), 5);
+    const hit = scene.pickWithRay(ray, mesh => mesh.metadata?.facility === 'main-compound');
+    assert.equal(hit?.hit, false, 'the open gate must not retain fence triangles across the carriageway');
+  }
+  for (const [x, z] of [[-265, 14], [-275, 64]]) {
+    const ray = new Ray(new Vector3(ISLAND_CENTER.x + x, 300, ISLAND_CENTER.z + z), new Vector3(0, -1, 0), 300);
+    const hit = scene.pickWithRay(ray, mesh => mesh.metadata?.facility === 'main-compound');
+    assert.ok(!hit?.hit || hit.pickedPoint.y < baseY + .5, 'the internal service road must clear every building');
+  }
+  const road = scene.getMeshByName('north-watch-switchback-road');
+  for (const [x, z] of [[-276, 96], [-278, 99]]) {
+    const ray = new Ray(new Vector3(ISLAND_CENTER.x + x, 300, ISLAND_CENTER.z + z), new Vector3(0, -1, 0), 300);
+    const hit = scene.pickWithRay(ray, mesh => mesh === road || mesh.metadata?.facility === 'main-compound');
+    assert.equal(hit?.pickedMesh, road, 'the northern exit ramp must remain above the terrace slab');
+  }
+  const radar = scene.meshes.filter(mesh => mesh.metadata?.facility === 'coastal-radar');
+  assert.ok(radar.length > 0 && radar.length <= 8, 'vehicle details must remain batched');
+  const radarFeatures = radar.flatMap(mesh => mesh.metadata.sourceNames);
+  assert.equal(radarFeatures.filter(name => /^coastal-radar-tire-axle-/.test(name)).length, 8,
+    'the reference vehicle has four axles and eight tires');
+  assert.ok(radarFeatures.includes('coastal-radar-rounded-rectangular-radome'));
+  const bounds = radar.map(mesh => mesh.getBoundingInfo().boundingBox);
+  const minX = Math.min(...bounds.map(box => box.minimumWorld.x));
+  const maxX = Math.max(...bounds.map(box => box.maximumWorld.x));
+  assert.ok(Math.abs((minX + maxX) / 2 - ISLAND_CENTER.x - ISLAND_RADAR_SITE.x) < .1,
+    'vehicle placement must apply the island world translation once');
+  assert.ok(maxX < ISLAND_CENTER.x + ISLAND_BASE.x - 77, 'the entire vehicle must remain outside the compound');
+  assert.ok(radar.every(mesh => mesh.getVerticesData('position').every(Number.isFinite)));
+  const wires = radar.find(mesh => mesh.name.includes('fine-antenna-wire'));
+  assert.equal(wires.checkCollisions, false, 'fine guy wires must not block inspection');
+  assert.equal(island.shadowCasters.includes(wires), false);
+});
+
+test('overhead grass survives the old height cutoff and reuses its patches throughout zoom', t => {
+  for (const [quality, oldCutoff, verticalReach] of [['Low', 24, 100], ['Medium', 48, 160], ['High', 67.2, 220]]) {
+    const scene = fixture(t);
+    const root = new Mesh('test-island-root', scene);
+    root.position.set(ISLAND_CENTER.x, 0, ISLAND_CENTER.z);
+    root.freezeWorldMatrix();
+    const nature = createIslandNature(scene, root, [], () => ({ height: 20, slope: 0 }), () => true,
+      new PBRMaterial('test-wood', scene), new PBRMaterial('test-rock', scene));
+    nature.setQuality(quality);
+    const patches = scene.meshes.filter(mesh => mesh.metadata?.nature === 'grass');
+    const eye = new Vector3(ISLAND_CENTER.x, 20 + verticalReach * .7, ISLAND_CENTER.z);
+    for (let frame = 0; frame < 40; frame++) nature.update(eye, frame / 60);
+    assert.equal(patches.length, 64, 'overhead reach must retain the bounded patch pool');
+    assert.ok(patches.some(mesh => mesh.isEnabled()), `${quality} grass must remain available during its overhead fade`);
+    const residentCounts = patches.map(mesh => mesh.thinInstanceCount);
+
+    for (const clearance of [oldCutoff - .1, oldCutoff + .1, verticalReach * .7, verticalReach + 5, 1_000, oldCutoff + 1]) {
+      eye.y = 20 + clearance;
+      nature.update(eye, 1);
+      assert.deepEqual(patches.map(mesh => mesh.thinInstanceCount), residentCounts,
+        'vertical zoom must reuse populated patches without rebuilding grass');
+      const enabled = patches.filter(mesh => mesh.isEnabled());
+      if (clearance < verticalReach) assert.ok(enabled.length > 0, `${quality} grass popped at ${clearance} m clearance`);
+      else assert.equal(enabled.length, 0, 'patches beyond the complete shader fade must be culled');
+    }
+  }
+});
+
+test('nearby grass remains available when the camera is above water beside a shoreline', t => {
+  const scene = fixture(t);
+  const root = new Mesh('test-island-root', scene);
+  root.position.set(ISLAND_CENTER.x, 0, ISLAND_CENTER.z);
+  root.freezeWorldMatrix();
+  const nature = createIslandNature(scene, root, [], x => x >= 0 ? { height: 20, slope: 0 } : undefined, () => true,
+    new PBRMaterial('test-wood', scene), new PBRMaterial('test-rock', scene));
+  const eye = new Vector3(ISLAND_CENTER.x - 2, 80, ISLAND_CENTER.z);
+  for (let frame = 0; frame < 40; frame++) nature.update(eye, frame / 60);
+  assert.ok(scene.meshes.some(mesh => mesh.metadata?.nature === 'grass' && mesh.isEnabled()),
+    'a missing ground sample directly below the camera must not hide neighboring grass');
 });
 
 test('viewing the island switches control without moving or resetting any ship state', t => {

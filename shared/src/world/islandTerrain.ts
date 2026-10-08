@@ -12,6 +12,20 @@ export const ISLAND_HILL_POSTS = Object.freeze([
 ]);
 /** Separate aviation clearing east of the lower compound's fence. */
 export const ISLAND_HELIPAD = Object.freeze({ x: -133, z: 40, halfX: 31, halfZ: 31 });
+/** Surveyed equipment pad immediately outside the western compound fence. */
+export const ISLAND_RADAR_SITE = Object.freeze({ x: -362, z: 24, halfX: 9, halfZ: 12 });
+/** Four scenic Bereg emplacements surrounding the lower installation.
+ * Heading is a Y rotation from the vehicle's local +z barrel direction. */
+export const ISLAND_BEREG_SITES = Object.freeze([
+  Object.freeze({ id: "north", x: -320, z: 140, halfX: 10, halfZ: 13, heading: 0,
+    access: [[-275, 114], [-300, 115], [-320, 125]] as const }),
+  Object.freeze({ id: "east", x: -80, z: 85, halfX: 13, halfZ: 10, heading: Math.PI / 2,
+    access: [[-80, 121], [-80, 107], [-80, 97]] as const }),
+  Object.freeze({ id: "south", x: -244, z: -66, halfX: 10, halfZ: 13, heading: Math.PI,
+    access: [[-313, -53], [-289, -62], [-270, -66], [-256, -66]] as const }),
+  Object.freeze({ id: "west", x: -410, z: 43, halfX: 13, halfZ: 10, heading: -Math.PI / 2,
+    access: [[-362, -12], [-395, -7], [-410, 16], [-410, 31]] as const }),
+]);
 
 /** Angle uses atan2(z / radiusZ, x / radiusX); the result is an elliptical radius. */
 export function islandShoreRadius(angle: number): number {
@@ -46,6 +60,14 @@ export function islandHeight(x: number, z: number): number {
   const padEdge = Math.max(Math.abs(x - ISLAND_HELIPAD.x) - ISLAND_HELIPAD.halfX,
     Math.abs(z - ISLAND_HELIPAD.z) - ISLAND_HELIPAD.halfZ);
   if (padEdge < 12) height += (naturalIslandHeight(ISLAND_HELIPAD.x, ISLAND_HELIPAD.z) - height) * (1 - smoothStep(0, 12, padEdge));
+  const radarEdge = Math.max(Math.abs(x - ISLAND_RADAR_SITE.x) - ISLAND_RADAR_SITE.halfX,
+    Math.abs(z - ISLAND_RADAR_SITE.z) - ISLAND_RADAR_SITE.halfZ);
+  if (radarEdge < 5) height += (naturalIslandHeight(ISLAND_RADAR_SITE.x, ISLAND_RADAR_SITE.z) - height)
+    * (1 - smoothStep(0, 5, radarEdge));
+  for (const site of ISLAND_BEREG_SITES) {
+    const edge = Math.max(Math.abs(x - site.x) - site.halfX, Math.abs(z - site.z) - site.halfZ);
+    if (edge < 8) height += (naturalIslandHeight(site.x, site.z) - height) * (1 - smoothStep(0, 8, edge));
+  }
   return height;
 }
 

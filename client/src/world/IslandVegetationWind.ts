@@ -8,6 +8,7 @@ import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 export class IslandVegetationWind extends MaterialPluginBase {
   time = 0;
   range = 0;
+  heightRange = 0;
   readonly eye = Vector3.Zero();
 
   constructor(material: Material, private readonly amplitude: number, private readonly height: number) {
@@ -32,8 +33,9 @@ export class IslandVegetationWind extends MaterialPluginBase {
 
   override bindForSubMesh(buffer: UniformBuffer): void {
     buffer.updateFloat("islandWindTime", this.time);
-    buffer.updateFloat4("islandWindParams", this.amplitude, this.height, this.range * .74, this.range);
-    buffer.updateFloat4("islandWindEye", this.eye.x, this.eye.y, this.eye.z, 0);
+    buffer.updateFloat4("islandWindParams", this.amplitude, this.height, this.range * .45, this.range);
+    buffer.updateFloat4("islandWindEye", this.eye.x, this.eye.y, this.eye.z,
+      this.heightRange > 0 ? this.range / this.heightRange : 1);
   }
 
   override getCustomCode(type: string, language: ShaderLanguage) {
@@ -46,8 +48,11 @@ export class IslandVegetationWind extends MaterialPluginBase {
         + sin(uniforms.islandWindTime * .73 + islandPhase * .38) * .35;
       var islandFade = 1.;
       if (uniforms.islandWindParams.w > 0.) {
+        let islandRoot = worldPos.xyz - finalWorld[1].xyz * positionUpdated.y;
+        let islandDistance = (islandRoot - uniforms.islandWindEye.xyz)
+          * vec3f(1., uniforms.islandWindEye.w, 1.);
         islandFade = 1. - smoothstep(uniforms.islandWindParams.z, uniforms.islandWindParams.w,
-          distance(worldPos.xyz, uniforms.islandWindEye.xyz));
+          length(islandDistance));
         worldPos.y -= max(0., positionUpdated.y) * length(finalWorld[1].xyz) * (1. - islandFade);
       }
       worldPos.x += islandGust * islandBend * uniforms.islandWindParams.x * islandFade * .8;
@@ -60,7 +65,9 @@ export class IslandVegetationWind extends MaterialPluginBase {
         + sin(islandWindTime * .73 + islandPhase * .38) * .35;
       float islandFade = 1.;
       if (islandWindParams.w > 0.) {
-        islandFade = 1. - smoothstep(islandWindParams.z, islandWindParams.w, distance(worldPos.xyz, islandWindEye.xyz));
+        vec3 islandRoot = worldPos.xyz - finalWorld[1].xyz * positionUpdated.y;
+        vec3 islandDistance = (islandRoot - islandWindEye.xyz) * vec3(1., islandWindEye.w, 1.);
+        islandFade = 1. - smoothstep(islandWindParams.z, islandWindParams.w, length(islandDistance));
         worldPos.y -= max(0., positionUpdated.y) * length(finalWorld[1].xyz) * (1. - islandFade);
       }
       worldPos.xz += vec2(.8, .6) * islandGust * islandBend * islandWindParams.x * islandFade;
