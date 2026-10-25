@@ -5,6 +5,7 @@ import { GameSession } from "../game/GameSession";
 import type { GameTelemetry } from "../game/GameSession";
 import { DEFAULT_GRAPHICS_QUALITY } from "../game/graphicsQuality";
 import type { GraphicsQuality } from "../game/graphicsQuality";
+import { InstallPrompt } from "./InstallPrompt";
 
 type GameStatus =
   | { readonly state: "loading" }
@@ -310,6 +311,7 @@ export function App() {
           {status.message}
         </div>
       )}
+      <InstallPrompt />
     </main>
   );
 }

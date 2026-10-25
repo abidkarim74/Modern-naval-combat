@@ -38,6 +38,16 @@ The broad vertical-booster-to-cruise sequence follows public accounts of the [NA
 
 The client tries WebGPU first and falls back to WebGL 2. The server can still run independently in another terminal with `npm run dev:server`; it currently exposes only `GET /health` at `http://127.0.0.1:2567` by default. Set `HOST` or `PORT` to change its address. The server scripts load an optional `server/.env` using Node's built-in environment-file support.
 
+## Home-screen installation
+
+Naval Combat can be installed as a home-screen app with its own ship icon and standalone window. In supported Android and desktop browsers, an **Add to Home Screen** card appears when the browser makes installation available. Click **Install app**, then confirm the browser's installation dialog. Browser eligibility and engagement rules may delay the card; the browser's own installation menu can also be used.
+
+On iPhone or iPad, the card's **Show steps** button explains how to open the page in Safari, use **Share → Add to Home Screen**, leave **Open as Web App** enabled if shown, and tap **Add**. **Not now** dismisses the suggestion for seven days. Installation suggestions are hidden when running in the installed app window.
+
+Serve `client/dist` over **HTTPS** in production. Localhost is also supported for testing: build with `npm run build`, then run `npm run preview -w @naval/client -- --host 127.0.0.1` and open the printed URL. An ordinary HTTP LAN address is not a secure context. Serve `/manifest.webmanifest`, `/sw.js`, `/offline.html`, and `/icons/*.png` as static files; use revalidation or `Cache-Control: no-cache` for `sw.js`.
+
+The production-only service worker provides a small connection screen when an installed app cannot reach the site. Gameplay still requires a connection to load; game bundles, audio, and server responses are not cached. Vite development sessions do not register the worker.
+
 ## Build and check
 
 ```sh
