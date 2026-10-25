@@ -1,6 +1,11 @@
 uniform time : f32;
 uniform eyePosition : vec3<f32>;
 uniform sunDirection : vec3<f32>;
+uniform moonDirection : vec3<f32>;
+uniform nightFactor : f32;
+uniform firePosition : vec3<f32>;
+uniform fireColor : vec3<f32>;
+uniform fireIntensity : f32;
 uniform detailStrength : f32;
 uniform reflectionStrength : f32;
 var skySamplerSampler : sampler;
@@ -47,8 +52,6 @@ fn main(input: FragmentInputs) -> FragmentOutputs {
   var p = fragmentInputs.vWorldPosition.xz;
   var range = length(uniforms.eyePosition - fragmentInputs.vWorldPosition);
   var rippleFade = 1.0 - smoothstep(180.0, 1700.0, range);
-  // A cached periodic wind spectrum carries irregular fine waves. Hardware
-  // mipmaps filter frequencies smaller than a pixel without per-pixel trig.
   var detail = textureSample(detailSampler, detailSamplerSampler, p / 32.0 - vec2<f32>(.019, .013) * uniforms.time).rgb;
   var ripples = (detail.rg * 2.0 - 1.0) * .35;
 #if WATER_DETAIL_LEVEL > 0
@@ -68,7 +71,6 @@ fn main(input: FragmentInputs) -> FragmentOutputs {
   }
   var restingHullBand = 1.0 - smoothstep(0.0, 9.0, waterlineDistance);
 
-  // Catch the gentle waterline rise at rest as well as the moving bow and wake.
   var geometricNormal = normalize(cross(dpdy(fragmentInputs.vWorldPosition), dpdx(fragmentInputs.vWorldPosition)));
   if (geometricNormal.y < 0.0) { geometricNormal = -geometricNormal; }
   var geometricSlope = -geometricNormal.xz / max(geometricNormal.y, 0.2);
@@ -80,18 +82,20 @@ fn main(input: FragmentInputs) -> FragmentOutputs {
   var view = normalize(uniforms.eyePosition - fragmentInputs.vWorldPosition);
   var reflected = reflect(-view, normal);
   var normalView = max(dot(normal, view), 0.001);
-  // Air/seawater Fresnel F0 = ((1.333 - 1) / (1.333 + 1))^2.
   var fresnel = 0.02037 + 0.97963 * pow(1.0 - min(normalView, 1.0), 5.0);
-  var horizon = vec3<f32>(0.69, 0.81, 0.87);
+  let dayHorizon = vec3<f32>(0.69, 0.81, 0.87);
+  let nightHorizon = vec3<f32>(0.015, 0.024, 0.042);
+  var horizon = mix(dayHorizon, nightHorizon, uniforms.nightFactor);
   var sky = textureSample(skySampler, skySamplerSampler, vec3<f32>(reflected.x, abs(reflected.y), reflected.z)).rgb;
   var crest = smoothstep(-0.8, 1.15, fragmentInputs.vWaveHeight);
-  var body = mix(vec3<f32>(0.008, 0.055, 0.12), vec3<f32>(0.016, 0.19, 0.23), crest * 0.63);
+  let dayBody = mix(vec3<f32>(0.008, 0.055, 0.12), vec3<f32>(0.016, 0.19, 0.23), crest * 0.63);
+  let nightBody = mix(vec3<f32>(0.0012, 0.005, 0.014), vec3<f32>(0.003, 0.012, 0.024), crest * 0.63);
+  var body = mix(dayBody, nightBody, uniforms.nightFactor);
   var shallow = 0.0;
   var coastDistance = 1000.0;
   var lagoonRadius = 10.0;
   var lagoonUv = vec2<f32>(0.0);
   var coastalDelta = p - uniforms.islandCenter.xz;
-  // Avoid coastline trig/noise across open water; this branch covers the full island.
   if (length(coastalDelta) < max(uniforms.islandRadii.x, uniforms.islandRadii.z) * 1.65 + 120.0) {
     var coastalUv = coastalDelta / uniforms.islandRadii.xz;
     var coastalAngle = atan2(coastalUv.y, coastalUv.x);
@@ -111,15 +115,19 @@ fn main(input: FragmentInputs) -> FragmentOutputs {
 #if WATER_DETAIL_LEVEL > 0
     coral = coral * .65 + noise(p * .17) * .35;
 #endif
-    var coastalWater = mix(vec3<f32>(.018, .35, .36), vec3<f32>(.065, .65, .57), coral * .7 + lagoon * .3);
+    let dayCoastal = mix(vec3<f32>(.018, .35, .36), vec3<f32>(.065, .65, .57), coral * .7 + lagoon * .3);
+    let nightCoastal = mix(vec3<f32>(.004, .045, .065), vec3<f32>(.008, .085, .11), coral * .7 + lagoon * .3);
+    var coastalWater = mix(dayCoastal, nightCoastal, uniforms.nightFactor);
     body = mix(body, coastalWater, shallow * .94);
   }
-  var scatter = pow(max(dot(view, -uniforms.sunDirection), 0.0), 4.0) * crest * (1.0 - fresnel);
-  body += vec3<f32>(0.015, 0.06, 0.045) * scatter;
-  var light = 0.65 + 0.35 * max(dot(normal, uniforms.sunDirection), 0.0);
+
+  let mainLightDir = normalize(mix(uniforms.sunDirection, uniforms.moonDirection, uniforms.nightFactor));
+  var scatter = pow(max(dot(view, -mainLightDir), 0.0), 4.0) * crest * (1.0 - fresnel);
+  body += mix(vec3<f32>(0.015, 0.06, 0.045), vec3<f32>(0.002, 0.008, 0.015), uniforms.nightFactor) * scatter;
+  var light = 0.65 + 0.35 * max(dot(normal, mainLightDir), 0.0);
   var color = mix(body * light, sky, fresnel * uniforms.reflectionStrength);
-  var halfway = normalize(view + uniforms.sunDirection);
-  var normalLight = max(dot(normal, uniforms.sunDirection), 0.0);
+  var halfway = normalize(view + mainLightDir);
+  var normalLight = max(dot(normal, mainLightDir), 0.0);
   var normalHalf = max(dot(normal, halfway), 0.0);
   var viewHalf = max(dot(view, halfway), 0.0);
   var slopeFootprint = fwidth(gradient);
@@ -131,17 +139,34 @@ fn main(input: FragmentInputs) -> FragmentOutputs {
   var visibilityView = normalLight * sqrt(normalView * normalView * (1.0 - alphaSquared) + alphaSquared);
   var visibilityLight = normalView * sqrt(normalLight * normalLight * (1.0 - alphaSquared) + alphaSquared);
   var visibility = 0.5 / max(visibilityView + visibilityLight, 0.0001);
-  var sunFresnel = 0.02037 + 0.97963 * pow(1.0 - viewHalf, 5.0);
-  var glint = min(distribution * visibility * sunFresnel * normalLight * 1.2, 2.0);
-  color += vec3<f32>(1.0, 0.92, 0.76) * glint * (1.0 - shallow * .55);
+  var lightFresnel = 0.02037 + 0.97963 * pow(1.0 - viewHalf, 5.0);
+  var glint = min(distribution * visibility * lightFresnel * normalLight * (1.2 - 0.4 * uniforms.nightFactor), 2.0);
+  let glintColor = mix(vec3<f32>(1.0, 0.92, 0.76), vec3<f32>(0.38, 0.55, 0.78), uniforms.nightFactor);
+  color += glintColor * glint * (1.0 - shallow * .55);
+
+  if (uniforms.fireIntensity > 0.01) {
+    let toFire = uniforms.firePosition - fragmentInputs.vWorldPosition;
+    let fireDist = length(toFire);
+    let maxFireReach = 75.0;
+    if (fireDist < maxFireReach) {
+      let fireDir = toFire / max(fireDist, 0.01);
+      let fireReachFade = smoothstep(maxFireReach, maxFireReach * 0.25, fireDist);
+      let fireAtten = (uniforms.fireIntensity * 0.55) / (1.0 + fireDist * fireDist * 0.005) * fireReachFade;
+      let fireNorm = max(dot(normal, fireDir), 0.0);
+      let fireHalf = normalize(view + fireDir);
+      let fireNormHalf = max(dot(normal, fireHalf), 0.0);
+      let fireSpec = pow(fireNormHalf, 22.0) * 1.6;
+      color += uniforms.fireColor * (fireNorm * 0.4 + fireSpec) * fireAtten;
+    }
+  }
 
 #if WATER_DETAIL_LEVEL > 0
-  // Sparse whitecaps follow local steepness and overlapping crests.
   var steepness = length(gradient);
   var foamPatch = detail.b;
   var foam = smoothstep(.16, .29, steepness) * smoothstep(.45, .9, crest)
     * smoothstep(.60, .85, foamPatch) * rippleFade;
-  color = mix(color, vec3<f32>(.85, .94, .93), foam * .46);
+  let foamColor = mix(vec3<f32>(.85, .94, .93), vec3<f32>(.12, .18, .26), uniforms.nightFactor);
+  color = mix(color, foamColor, foam * .46);
 #endif
   if (shallow > .01) {
     var shoreBreak = (1.0 - smoothstep(1.5, 8.0, abs(coastDistance - 2.7)))
@@ -150,18 +175,18 @@ fn main(input: FragmentInputs) -> FragmentOutputs {
     var reefBand = gaussian((lagoonRadius - 1.04) / .048)
       * smoothstep(-.10, .35, -lagoonUv.y) * smoothstep(.47, .77, noise(p * .037))
       * (.55 + .45 * sin(lagoonRadius * 32.0 - uniforms.time * 1.3));
-    color = mix(color, vec3<f32>(.87, .96, .94), clamp(shoreBreak * .70 + reefBand * .72, 0.0, .85));
+    let shallowFoam = mix(vec3<f32>(.87, .96, .94), vec3<f32>(.14, .21, .30), uniforms.nightFactor);
+    color = mix(color, shallowFoam, clamp(shoreBreak * .70 + reefBand * .72, 0.0, .85));
   }
 
-  // A faint broken contact line remains while swell laps a stationary hull.
   if (waterlineDistance < 3.0) {
     var lapping = 0.5 + 0.5 * sin(uniforms.time * 1.15 - hullXZ.y * 0.055);
     var contact = gaussian(waterlineDistance / 0.95)
       * smoothstep(0.28, 0.78, detail.b) * (0.055 + 0.045 * lapping);
-    color = mix(color, vec3<f32>(0.72, 0.86, 0.87), contact);
+    let contactColor = mix(vec3<f32>(0.72, 0.86, 0.87), vec3<f32>(0.10, 0.16, 0.22), uniforms.nightFactor);
+    color = mix(color, contactColor, contact);
   }
 
-  // Strong bubbly hull shading builds with vessel speed.
   var shipDelta = p - uniforms.boatPosition.xz;
   var speedFactor = smoothstep(0.4, 12.0, abs(uniforms.boatSpeed));
   if (speedFactor > .001 && length(shipDelta) < 580.0) {
@@ -170,8 +195,6 @@ fn main(input: FragmentInputs) -> FragmentOutputs {
     var shipRight = vec2<f32>(cos(uniforms.boatHeading), -sin(uniforms.boatHeading));
     var shipAlong = dot(shipDelta, shipForward);
     var shipAcross = dot(shipDelta, shipRight);
-    // Include the full bow V (centre up to 48 m, plus its Gaussian width).
-    // A narrow hull-only cutoff otherwise slices visible bow foam into a sheet.
     var foamWidth = max(64.0, 24.0 + max(-shipAlong, 0.0) * .24);
     if (shipAlong < 110.0 && shipAlong > -560.0 && abs(shipAcross) < foamWidth) {
     var shipHalfBeam = max(0.3, 8.5 * (1.0 - smoothstep(25.0, 78.0, shipAlong)));
@@ -204,7 +227,8 @@ fn main(input: FragmentInputs) -> FragmentOutputs {
     shipFoam *= (1.0 - smoothstep(foamWidth - 12.0, foamWidth, abs(shipAcross)))
       * smoothstep(-560.0, -510.0, shipAlong) * (1.0 - smoothstep(90.0, 110.0, shipAlong))
       * (1.0 - smoothstep(520.0, 580.0, length(shipDelta)));
-    color = mix(color, vec3<f32>(.93, .98, 1.0), shipFoam);
+    let shipFoamColor = mix(vec3<f32>(.93, .98, 1.0), vec3<f32>(.15, .22, .32), uniforms.nightFactor);
+    color = mix(color, shipFoamColor, shipFoam);
     }
   }
   var haze = smoothstep(800.0, 4800.0, range);

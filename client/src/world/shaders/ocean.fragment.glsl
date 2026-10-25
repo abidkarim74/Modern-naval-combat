@@ -2,6 +2,11 @@ precision highp float;
 uniform float time;
 uniform vec3 eyePosition;
 uniform vec3 sunDirection;
+uniform vec3 moonDirection;
+uniform float nightFactor;
+uniform vec3 firePosition;
+uniform vec3 fireColor;
+uniform float fireIntensity;
 uniform float detailStrength;
 uniform float reflectionStrength;
 uniform samplerCube skySampler;
@@ -80,10 +85,14 @@ void main(void) {
   float normalView = max(dot(normal, view), 0.001);
   // Air/seawater Fresnel F0 = ((1.333 - 1) / (1.333 + 1))^2.
   float fresnel = 0.02037 + 0.97963 * pow(1.0 - min(normalView, 1.0), 5.0);
-  vec3 horizon = vec3(0.69, 0.81, 0.87);
+  vec3 dayHorizon = vec3(0.69, 0.81, 0.87);
+  vec3 nightHorizon = vec3(0.015, 0.024, 0.042);
+  vec3 horizon = mix(dayHorizon, nightHorizon, nightFactor);
   vec3 sky = textureCube(skySampler, vec3(reflected.x, abs(reflected.y), reflected.z)).rgb;
   float crest = smoothstep(-0.8, 1.15, vWaveHeight);
-  vec3 body = mix(vec3(0.008, 0.055, 0.12), vec3(0.016, 0.19, 0.23), crest * 0.63);
+  vec3 dayBody = mix(vec3(0.008, 0.055, 0.12), vec3(0.016, 0.19, 0.23), crest * 0.63);
+  vec3 nightBody = mix(vec3(0.0012, 0.005, 0.014), vec3(0.003, 0.012, 0.024), crest * 0.63);
+  vec3 body = mix(dayBody, nightBody, nightFactor);
   float shallow = 0.0;
   float coastDistance = 1000.0;
   float lagoonRadius = 10.0;
@@ -109,15 +118,19 @@ void main(void) {
 #if WATER_DETAIL_LEVEL > 0
     coral = coral * .65 + noise(p * .17) * .35;
 #endif
-    vec3 coastalWater = mix(vec3(.018, .35, .36), vec3(.065, .65, .57), coral * .7 + lagoon * .3);
+    vec3 dayCoastal = mix(vec3(.018, .35, .36), vec3(.065, .65, .57), coral * .7 + lagoon * .3);
+    vec3 nightCoastal = mix(vec3(.004, .045, .065), vec3(.008, .085, .11), coral * .7 + lagoon * .3);
+    vec3 coastalWater = mix(dayCoastal, nightCoastal, nightFactor);
     body = mix(body, coastalWater, shallow * .94);
   }
-  float scatter = pow(max(dot(view, -sunDirection), 0.0), 4.0) * crest * (1.0 - fresnel);
-  body += vec3(0.015, 0.06, 0.045) * scatter;
-  float light = 0.65 + 0.35 * max(dot(normal, sunDirection), 0.0);
+
+  vec3 mainLightDir = normalize(mix(sunDirection, moonDirection, nightFactor));
+  float scatter = pow(max(dot(view, -mainLightDir), 0.0), 4.0) * crest * (1.0 - fresnel);
+  body += mix(vec3(0.015, 0.06, 0.045), vec3(0.002, 0.008, 0.015), nightFactor) * scatter;
+  float light = 0.65 + 0.35 * max(dot(normal, mainLightDir), 0.0);
   vec3 color = mix(body * light, sky, fresnel * reflectionStrength);
-  vec3 halfway = normalize(view + sunDirection);
-  float normalLight = max(dot(normal, sunDirection), 0.0);
+  vec3 halfway = normalize(view + mainLightDir);
+  float normalLight = max(dot(normal, mainLightDir), 0.0);
   float normalHalf = max(dot(normal, halfway), 0.0);
   float viewHalf = max(dot(view, halfway), 0.0);
   vec2 slopeFootprint = fwidth(gradient);
@@ -129,9 +142,27 @@ void main(void) {
   float visibilityView = normalLight * sqrt(normalView * normalView * (1.0 - alphaSquared) + alphaSquared);
   float visibilityLight = normalView * sqrt(normalLight * normalLight * (1.0 - alphaSquared) + alphaSquared);
   float visibility = 0.5 / max(visibilityView + visibilityLight, 0.0001);
-  float sunFresnel = 0.02037 + 0.97963 * pow(1.0 - viewHalf, 5.0);
-  float glint = min(distribution * visibility * sunFresnel * normalLight * 1.2, 2.0);
-  color += vec3(1.0, 0.92, 0.76) * glint * (1.0 - shallow * .55);
+  float lightFresnel = 0.02037 + 0.97963 * pow(1.0 - viewHalf, 5.0);
+  float glint = min(distribution * visibility * lightFresnel * normalLight * (1.2 - 0.4 * nightFactor), 2.0);
+  vec3 glintColor = mix(vec3(1.0, 0.92, 0.76), vec3(0.38, 0.55, 0.78), nightFactor);
+  color += glintColor * glint * (1.0 - shallow * .55);
+
+  // Dynamic firelight reflection on water surface (contained locally near vessel)
+  if (fireIntensity > 0.01) {
+    vec3 toFire = firePosition - vWorldPosition;
+    float fireDist = length(toFire);
+    float maxFireReach = 75.0;
+    if (fireDist < maxFireReach) {
+      vec3 fireDir = toFire / max(fireDist, 0.01);
+      float fireReachFade = smoothstep(maxFireReach, maxFireReach * 0.25, fireDist);
+      float fireAtten = (fireIntensity * 0.55) / (1.0 + fireDist * fireDist * 0.005) * fireReachFade;
+      float fireNorm = max(dot(normal, fireDir), 0.0);
+      vec3 fireHalf = normalize(view + fireDir);
+      float fireNormHalf = max(dot(normal, fireHalf), 0.0);
+      float fireSpec = pow(fireNormHalf, 22.0) * 1.6;
+      color += fireColor * (fireNorm * 0.4 + fireSpec) * fireAtten;
+    }
+  }
 
 #if WATER_DETAIL_LEVEL > 0
   // Sparse whitecaps follow local steepness and overlapping crests.
@@ -139,7 +170,8 @@ void main(void) {
   float foamPatch = detail.b;
   float foam = smoothstep(.16, .29, steepness) * smoothstep(.45, .9, crest)
     * smoothstep(.60, .85, foamPatch) * rippleFade;
-  color = mix(color, vec3(.85, .94, .93), foam * .46);
+  vec3 foamColor = mix(vec3(.85, .94, .93), vec3(.12, .18, .26), nightFactor);
+  color = mix(color, foamColor, foam * .46);
 #endif
   if (shallow > .01) {
     float shoreBreak = (1.0 - smoothstep(1.5, 8.0, abs(coastDistance - 2.7)))
@@ -148,7 +180,8 @@ void main(void) {
     float reefBand = gaussian((lagoonRadius - 1.04) / .048)
       * smoothstep(-.10, .35, -lagoonUv.y) * smoothstep(.47, .77, noise(p * .037))
       * (.55 + .45 * sin(lagoonRadius * 32.0 - time * 1.3));
-    color = mix(color, vec3(.87, .96, .94), clamp(shoreBreak * .70 + reefBand * .72, 0.0, .85));
+    vec3 shallowFoam = mix(vec3(.87, .96, .94), vec3(.14, .21, .30), nightFactor);
+    color = mix(color, shallowFoam, clamp(shoreBreak * .70 + reefBand * .72, 0.0, .85));
   }
 
   // A faint broken contact line remains while swell laps a stationary hull.
@@ -156,7 +189,8 @@ void main(void) {
     float lapping = 0.5 + 0.5 * sin(time * 1.15 - hullXZ.y * 0.055);
     float contact = gaussian(waterlineDistance / 0.95)
       * smoothstep(0.28, 0.78, detail.b) * (0.055 + 0.045 * lapping);
-    color = mix(color, vec3(0.72, 0.86, 0.87), contact);
+    vec3 contactColor = mix(vec3(0.72, 0.86, 0.87), vec3(0.10, 0.16, 0.22), nightFactor);
+    color = mix(color, contactColor, contact);
   }
 
   // Strong bubbly hull shading builds with vessel speed.
@@ -168,8 +202,6 @@ void main(void) {
     vec2 shipRight = vec2(cos(boatHeading), -sin(boatHeading));
     float shipAlong = dot(shipDelta, shipForward);
     float shipAcross = dot(shipDelta, shipRight);
-    // Include the full bow V (centre up to 48 m, plus its Gaussian width).
-    // A narrow hull-only cutoff otherwise slices visible bow foam into a sheet.
     float foamWidth = max(64.0, 24.0 + max(-shipAlong, 0.0) * .24);
     if (shipAlong < 110.0 && shipAlong > -560.0 && abs(shipAcross) < foamWidth) {
     float shipHalfBeam = max(0.3, 8.5 * (1.0 - smoothstep(25.0, 78.0, shipAlong)));
@@ -202,7 +234,8 @@ void main(void) {
     shipFoam *= (1.0 - smoothstep(foamWidth - 12.0, foamWidth, abs(shipAcross)))
       * smoothstep(-560.0, -510.0, shipAlong) * (1.0 - smoothstep(90.0, 110.0, shipAlong))
       * (1.0 - smoothstep(520.0, 580.0, length(shipDelta)));
-    color = mix(color, vec3(.93, .98, 1.0), shipFoam);
+    vec3 shipFoamColor = mix(vec3(.93, .98, 1.0), vec3(.15, .22, .32), nightFactor);
+    color = mix(color, shipFoamColor, shipFoam);
     }
   }
   float haze = smoothstep(800.0, 4800.0, range);

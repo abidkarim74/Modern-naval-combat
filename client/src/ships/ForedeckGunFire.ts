@@ -13,6 +13,7 @@ import type { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import type { Scene } from "@babylonjs/core/scene";
 import { sampleOceanHeight, islandHeight, ISLAND_CENTER, ISLAND_RADIUS_X, ISLAND_RADIUS_Z, islandShoreRadius } from "@naval/shared";
 import { configureWeaponParticles, createWeaponFireTexture, createWeaponSmokeTexture } from "./weaponParticles";
+import { getSceneLighting } from "../world/nightLighting";
 
 const FIRE_INTERVAL_SECONDS = 3.2;
 const MUZZLE_FLASH_SECONDS = .045;
@@ -173,11 +174,11 @@ export class ForedeckGunFire {
       tracerPositions: [shellPosition.clone()],
     });
 
+    const isNight = getSceneLighting(this.scene).night > 0.05;
     this.muzzleLight.position.copyFrom(muzzlePosition);
-    // Resolve after static batching, so the flash illuminates surviving ship
-    // meshes without changing the sky, island, or ocean lighting.
+    this.muzzleLight.range = isNight ? 75 : 36;
     this.muzzleLight.includedOnlyMeshes = this.elevationPivot.parent?.parent?.getChildMeshes() ?? [this.muzzle];
-    this.muzzleLight.intensity = MUZZLE_LIGHT_INTENSITY;
+    this.muzzleLight.intensity = isNight ? 16 : MUZZLE_LIGHT_INTENSITY;
     this.flashTime = MUZZLE_FLASH_SECONDS;
     this.recoilTime = RECOIL_SECONDS;
     this.fireCooldown = FIRE_INTERVAL_SECONDS;
@@ -191,8 +192,14 @@ export class ForedeckGunFire {
     this.effectDelta = delta;
     this.fireCooldown = Math.max(0, this.fireCooldown - delta);
     this.flashTime = Math.max(0, this.flashTime - delta);
-    this.muzzleLight.intensity = MUZZLE_LIGHT_INTENSITY * (this.flashTime / MUZZLE_FLASH_SECONDS);
-    if (this.flashTime === 0) this.muzzleLight.intensity = 0;
+    const isNight = getSceneLighting(this.scene).night > 0.05;
+    const peakIntensity = isNight ? 13 : MUZZLE_LIGHT_INTENSITY;
+    this.muzzleLight.intensity = peakIntensity * (this.flashTime / MUZZLE_FLASH_SECONDS);
+    if (this.flashTime === 0) {
+      this.muzzleLight.intensity = 0;
+    } else {
+      getSceneLighting(this.scene).addGlow(this.muzzleLight.position, 1.0, 0.54, 0.16, this.muzzleLight.intensity * 1.1, 28);
+    }
 
     this.recoilTime = Math.max(0, this.recoilTime - delta);
     const elapsed = RECOIL_SECONDS - this.recoilTime;
@@ -342,8 +349,10 @@ export class ForedeckGunFire {
       explosion.shockwaveMaterial.alpha = shockFade * .45;
 
       // Point light flash
-      if (explosion.age < .25) {
-        explosion.light.intensity = 12 * (1 - explosion.age / .25);
+      if (explosion.age < .3) {
+        const mult = isNight ? 2 : 1;
+        explosion.light.intensity = 12 * mult * (1 - explosion.age / .3);
+        getSceneLighting(this.scene).addGlow(explosion.position, 1.0, 0.65, 0.2, explosion.light.intensity, 85);
       } else {
         explosion.light.intensity = 0;
       }
@@ -500,6 +509,7 @@ export class ForedeckGunFire {
     this.attachEmissions(smoke, emissions);
     // Air resistance arrests the initial jet, then carries every puff downwind.
     const updateParticles = smoke.updateFunction;
+    const sampleScratch = { r: 1, g: 1, b: 1 };
     smoke.updateFunction = (particles) => {
       const delta = this.effectDelta;
       const drag = 1 - Math.exp(-delta * (blast ? 2.2 : 3.5));
@@ -509,6 +519,15 @@ export class ForedeckGunFire {
         particle.direction.z += Math.cos(particle.position.x * .4 + particle.age) * delta * .4;
       }
       updateParticles(particles);
+      const lighting = getSceneLighting(this.scene);
+      if (lighting.night > 0.05) {
+        for (const particle of particles) {
+          lighting.sampleInto(particle.position.x, particle.position.y, particle.position.z, sampleScratch);
+          particle.color.r = Math.min(1.0, particle.color.r * sampleScratch.r);
+          particle.color.g = Math.min(1.0, particle.color.g * sampleScratch.g);
+          particle.color.b = Math.min(1.0, particle.color.b * sampleScratch.b);
+        }
+      }
     };
     configureWeaponParticles(smoke, this.scene);
     smoke.start();

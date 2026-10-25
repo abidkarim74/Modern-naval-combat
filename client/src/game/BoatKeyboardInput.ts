@@ -1,4 +1,4 @@
-const GAME_KEYS = new Set(["w", "a", "s", "d", "r", "t", " ", "arrowup", "arrowdown", "arrowleft", "arrowright"]);
+const GAME_KEYS = new Set(["w", "a", "s", "d", "r", "t", "n", " ", "arrowup", "arrowdown", "arrowleft", "arrowright"]);
 
 export class BoatKeyboardInput {
   private readonly pressedKeys = new Set<string>();
@@ -40,6 +40,12 @@ export class BoatKeyboardInput {
     this.newlyPressedKeys.delete("r");
     this.newlyPressedKeys.delete("t");
     return bank;
+  }
+
+  consumeNightTogglePress(): boolean {
+    const pressed = this.newlyPressedKeys.has("n");
+    this.newlyPressedKeys.delete("n");
+    return pressed;
   }
 
   clear(): void {

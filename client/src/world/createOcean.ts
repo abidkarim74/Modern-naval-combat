@@ -20,6 +20,11 @@ const UNIFORM_NAMES = [
   "time",
   "eyePosition",
   "sunDirection",
+  "moonDirection",
+  "nightFactor",
+  "firePosition",
+  "fireColor",
+  "fireIntensity",
   "detailStrength",
   "reflectionStrength",
   "boatPosition",
@@ -39,6 +44,8 @@ const UNIFORM_NAMES = [
 export class OceanRenderer {
   readonly material: ShaderMaterial;
   private readonly boatPosition = new Vector3();
+  private readonly firePosition = new Vector3();
+  private readonly fireColor = new Vector3(1, 0.45, 0.12);
   private mesh: Mesh;
   private subdivisions: number;
   private cellSizeMeters: number;
@@ -49,6 +56,7 @@ export class OceanRenderer {
     backend: RendererBackend,
     settings: GraphicsQualitySettings,
     private readonly sunDirection: Vector3,
+    private readonly moonDirection: Vector3 = new Vector3(0.48, 0.62, -0.62).normalize(),
   ) {
     const isWebGpu = backend === "WebGPU";
     this.material = new ShaderMaterial(
@@ -70,6 +78,11 @@ export class OceanRenderer {
     if (scene.environmentTexture) this.material.setTexture("skySampler", scene.environmentTexture);
     this.material.setTexture("detailSampler", createOceanDetailTexture(scene));
     this.material.setVector3("sunDirection", this.sunDirection);
+    this.material.setVector3("moonDirection", this.moonDirection);
+    this.material.setFloat("nightFactor", 0);
+    this.material.setVector3("firePosition", this.firePosition);
+    this.material.setVector3("fireColor", this.fireColor);
+    this.material.setFloat("fireIntensity", 0);
     this.material.setVector3("islandCenter", new Vector3(ISLAND_CENTER.x, 0, ISLAND_CENTER.z));
     this.material.setVector3("islandRadii", new Vector3(ISLAND_RADIUS_X, 0, ISLAND_RADIUS_Z));
     this.material.setVector4("lagoonShape", new Vector4(ISLAND_CENTER.x + ISLAND_LAGOON.x,
@@ -80,6 +93,19 @@ export class OceanRenderer {
     this.detailLevel = settings.waterDetailLevel;
     this.mesh = this.createMesh(settings);
     this.setQuality(settings);
+  }
+
+  setNight(nightFactor: number, moonDirection?: Vector3): void {
+    this.material.setFloat("nightFactor", nightFactor);
+    if (moonDirection) this.material.setVector3("moonDirection", moonDirection);
+  }
+
+  setFireGlow(position: Vector3, r: number, g: number, b: number, intensity: number): void {
+    this.firePosition.copyFrom(position);
+    this.fireColor.set(r, g, b);
+    this.material.setVector3("firePosition", this.firePosition);
+    this.material.setVector3("fireColor", this.fireColor);
+    this.material.setFloat("fireIntensity", intensity);
   }
 
   update(timeSeconds: number, centerX: number, centerZ: number, eyePosition: Vector3, heading: number, speed: number, yawRate: number, focus?: Vector3): void {

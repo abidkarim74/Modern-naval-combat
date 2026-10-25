@@ -55,7 +55,7 @@ export class BoatWake {
       fragmentSource: isWebGpu ? wakeFragmentWgsl : wakeFragmentGlsl,
     }, {
       attributes: ["position", "uv", "color"],
-      uniforms: ["world", "worldViewProjection", "time", "boatPosition", "boatHeading", "boatSpeed", "waterGrid",
+      uniforms: ["world", "worldViewProjection", "time", "boatPosition", "boatHeading", "boatSpeed", "waterGrid", "nightFactor",
         ...OCEAN_WAVES.flatMap((_, index) => [`wave${index}`, `waveFrequency${index}`, `wavePhase${index}`])],
       samplers: ["foamSampler"],
       defines: ["WAKE_SURFACE"],
@@ -65,6 +65,7 @@ export class BoatWake {
     this.material.backFaceCulling = false;
     this.material.disableDepthWrite = true;
     this.material.setVector4("waterGrid", this.waterGrid);
+    this.material.setFloat("nightFactor", 0);
     this.material.setTexture("foamSampler", createFoamTexture(scene));
     for (let index = 0; index < OCEAN_WAVES.length; index++) {
       const wave = OCEAN_WAVES[index];
@@ -97,6 +98,10 @@ export class BoatWake {
     this.waterGrid.z = settings.oceanSubdivisions * settings.oceanCellSizeMeters / 2;
     this.waterGrid.w = settings.oceanCellSizeMeters;
     this.material.setVector4("waterGrid", this.waterGrid);
+  }
+
+  setNight(nightFactor: number): void {
+    this.material.setFloat("nightFactor", nightFactor);
   }
 
   update(state: BoatSimulationState, time: number, eyePosition?: Vector3, renderPosition?: Vector3, renderHeading?: number): void {

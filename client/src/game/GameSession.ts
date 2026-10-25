@@ -31,6 +31,7 @@ import { MissileVls } from "../ships/MissileVls";
 import type { MissileTelemetry } from "../ships/MissileVls";
 import type { MissileLaunchBank } from "../ships/destroyerVls";
 import { IslandCamera } from "./IslandCamera";
+import { getSceneLighting } from "../world/nightLighting";
 
 const MAX_FRAME_SECONDS = 0.1;
 const MAX_SIMULATION_STEPS_PER_FRAME = 6;
@@ -39,6 +40,7 @@ const METERS_PER_SECOND_TO_KNOTS = 1.943844;
 
 export interface GameTelemetry {
   readonly cameraView: CameraView;
+  readonly nightMode: boolean;
   readonly speedKnots: number;
   readonly throttlePercent: number;
   readonly distanceMeters: number;
@@ -88,6 +90,7 @@ export class GameSession {
   private lastSimulationTimeMs = 0;
   private cameraView: CameraView = "chase";
   private trackedMissileState: CruiseMissileState | null = null;
+  private nightMode = false;
 
   constructor(
     private readonly engine: AbstractEngine,
@@ -104,7 +107,7 @@ export class GameSession {
     this.island = createIsland(this.scene);
     this.missiles = new MissileVls(this.scene, this.boat.root, this.boat.missileLaunchCells, () => this.audio.soundMissileLaunch());
     this.sky = createMaritimeSky(this.scene, settings, [...this.boat.shadowCasters, ...this.island.shadowCasters]);
-    this.ocean = new OceanRenderer(this.scene, backend, settings, this.sky.sunDirection);
+    this.ocean = new OceanRenderer(this.scene, backend, settings, this.sky.sunDirection, this.sky.moonDirection);
     this.ambientSprites = new AmbientSprites(this.scene, settings);
     this.wake = new BoatWake(this.scene, backend);
     this.cameraAnchor = new Mesh("chase-camera-anchor", this.scene);
@@ -164,6 +167,12 @@ export class GameSession {
 
   update(frameDeltaSeconds: number): void {
     const frameDelta = Math.min(Math.max(frameDeltaSeconds, 0), MAX_FRAME_SECONDS);
+    if (this.input.consumeNightTogglePress()) {
+      this.toggleNightMode();
+    }
+    const sceneLighting = getSceneLighting(this.scene);
+    sceneLighting.beginFrame();
+    sceneLighting.night = this.sky.nightFactor;
     const firePressed = this.input.consumeGunFirePress();
     const launchBank = this.input.consumeMissileLaunchPress();
     if (this.cameraView === "island") {
@@ -230,7 +239,23 @@ export class GameSession {
       undefined,
     );
     const environmentFocus = this.cameraView === "island" ? this.islandCamera.camera.target : this.boat.root.position;
-    this.sky.update(environmentFocus, this.cameraView === "island", renderTime);
+    this.sky.update(environmentFocus, this.cameraView === "island", renderTime, frameDelta);
+    sceneLighting.night = this.sky.nightFactor;
+    this.ocean.setNight(this.sky.nightFactor, this.sky.moonDirection);
+    this.wake.setNight(this.sky.nightFactor);
+
+    const strongestGlow = sceneLighting.strongestGlowNear(this.boat.root.position);
+    if (
+      strongestGlow &&
+      strongestGlow.intensity > 0.05 &&
+      strongestGlow.position.y < 42 &&
+      Vector3.DistanceSquared(strongestGlow.position, this.boat.root.position) < 75 * 75
+    ) {
+      this.ocean.setFireGlow(strongestGlow.position, strongestGlow.r, strongestGlow.g, strongestGlow.b, Math.min(strongestGlow.intensity, 12.0));
+    } else {
+      this.ocean.setFireGlow(Vector3.Zero(), 0, 0, 0, 0);
+    }
+
     const activeCamera = this.scene.activeCamera ?? this.camera;
     activeCamera.getDirectionToRef(Axis.Z, this.audioListenerForward);
     this.audioListenerForward.normalize();
@@ -289,6 +314,22 @@ export class GameSession {
 
   get currentQuality(): GraphicsQuality {
     return this.qualityValue;
+  }
+
+  get isNight(): boolean {
+    return this.nightMode;
+  }
+
+  setNightMode(enabled: boolean): void {
+    if (this.nightMode === enabled) return;
+    this.nightMode = enabled;
+    this.sky.setNight(enabled);
+    this.publishTelemetry();
+  }
+
+  toggleNightMode(): boolean {
+    this.setNightMode(!this.nightMode);
+    return this.nightMode;
   }
 
   dispose(): void {
@@ -359,6 +400,7 @@ export class GameSession {
         : this.lastSimulationTimeMs;
     this.onTelemetry({
       cameraView: this.cameraView,
+      nightMode: this.nightMode,
       speedKnots: state.speed * METERS_PER_SECOND_TO_KNOTS,
       throttlePercent: state.throttle * 100,
       distanceMeters: state.distanceTraveledMeters,

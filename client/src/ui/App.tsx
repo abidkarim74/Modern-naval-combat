@@ -26,6 +26,7 @@ const EMPTY_TELEMETRY: GameTelemetry = {
   soundStatus: "off",
   activeBirds: 0,
   cameraView: "chase",
+  nightMode: false,
   missiles: {
     forwardRemaining: 32,
     aftRemaining: 64,
@@ -142,6 +143,17 @@ export function App() {
       </header>
 
       <nav className="nav-actions" aria-label="World navigation">
+        <button
+          type="button"
+          className={`theme-toggle hud-panel${telemetry.nightMode ? " is-night" : ""}`}
+          aria-pressed={telemetry.nightMode}
+          disabled={status.state !== "ready"}
+          onClick={() => sessionRef.current?.toggleNightMode()}
+          title={telemetry.nightMode ? "Switch to daylight" : "Switch to night operations (realistic stars & dynamic weapon fire)"}
+        >
+          <span aria-hidden="true">{telemetry.nightMode ? "🌙" : "☀️"}</span>
+          {telemetry.nightMode ? "Night ops" : "Daylight"}
+        </button>
         {isIslandView ? <button
           type="button"
           className="camera-toggle hud-panel"
@@ -299,6 +311,7 @@ export function App() {
         {cameraView === "forward" && <div className="control-hint"><kbd>←</kbd><kbd>↑</kbd><kbd>↓</kbd><kbd>→</kbd><span>Aim gun</span></div>}
         {cameraView === "forward" && <div className="control-hint"><kbd>Space</kbd><span>Fire</span></div>}
         <div className="control-hint"><kbd>H</kbd><span>Ship horn</span></div>
+        <div className="control-hint"><kbd>N</kbd><span>Night ops</span></div>
         <span className="hint-divider" />
         <span className="mouse-hint">
           {cameraView === "missile" ? "Following latest missile" : cameraView === "chase" ? "Drag to look · Scroll to zoom" : "↑ / ↓ elevation · ← / → traverse · Space fire"} · Click or steer to start audio

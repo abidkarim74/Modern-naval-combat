@@ -17,6 +17,7 @@ import type { Scene } from "@babylonjs/core/scene";
 import type { GraphicsQuality } from "../game/graphicsQuality";
 import type { MissileLaunchBank, VlsLaunchCell } from "./destroyerVls";
 import { configureWeaponParticles, createWeaponSmokeTexture, createWeaponFireTexture } from "./weaponParticles";
+import { getSceneLighting } from "../world/nightLighting";
 
 const LAUNCH_INTERVAL_SECONDS = 3.5;
 const HATCH_OPEN_SECONDS = .34;
@@ -83,6 +84,7 @@ export class MissileVls {
   private readonly flamePaint: StandardMaterial;
   private readonly corePaint: StandardMaterial;
   private readonly launchLight: PointLight;
+  private readonly deckLight: PointLight;
   private pending: PendingLaunch | null = null;
   private latest: CruiseMissileSimulation | null = null;
   private lastBank: MissileLaunchBank | null = null;
@@ -109,11 +111,18 @@ export class MissileVls {
     this.corePaint.emissiveColor.set(7, 6.3, 4.2);
     this.flamePaint.emissiveColor.set(4.5, 1.8, .22);
     this.launchLight = new PointLight("Mk41-launch-illumination", Vector3.Zero(), scene);
-    this.launchLight.diffuse = new Color3(1, .54, .15);
-    this.launchLight.specular = new Color3(1, .72, .37);
-    this.launchLight.range = 65;
+    this.launchLight.diffuse = new Color3(1, .58, .18);
+    this.launchLight.specular = new Color3(1, .78, .42);
+    this.launchLight.range = 85;
     this.launchLight.intensity = 0;
     this.launchLight.includedOnlyMeshes = ship.getChildMeshes();
+
+    this.deckLight = new PointLight("Mk41-deck-fire-illumination", Vector3.Zero(), scene);
+    this.deckLight.diffuse = new Color3(1, .45, .10);
+    this.deckLight.specular = new Color3(1, .68, .25);
+    this.deckLight.range = 72;
+    this.deckLight.intensity = 0;
+    this.deckLight.includedOnlyMeshes = ship.getChildMeshes();
     this.smokeTexture = createWeaponSmokeTexture(scene, "VLS-billowing-smoke-density");
     this.fireTexture = createWeaponFireTexture(scene, "VLS-turbulent-fire-density");
     for (const material of [this.flamePaint, this.corePaint]) {
@@ -189,6 +198,10 @@ export class MissileVls {
     let nearestBurningDistance = Infinity;
     // Keep the light's shader layout stable throughout ignition and burnout.
     this.launchLight.intensity = 0;
+    this.deckLight.intensity = 0;
+    const lighting = getSceneLighting(this.scene);
+    const isNight = lighting.night > 0.05;
+
     for (let index = this.missiles.length - 1; index >= 0; index--) {
       const missile = this.missiles[index];
       missile.flight.update(delta);
@@ -211,16 +224,29 @@ export class MissileVls {
       // independently so the incandescent jet pulses rather than scaling rigidly.
       missile.flame.scaling.set(1 + (flicker - 1) * 1.7, flicker * fade, 1 + (flicker - 1) * 1.7);
       missile.core.scaling.set(1 / flicker, (1 + (flicker - 1) * .6) * fade, 1 / flicker);
-      const lightDistance = Vector3.DistanceSquared(missile.node.position, this.ship.position);
-      if (burning && lightDistance < 120 ** 2 && lightDistance < nearestBurningDistance) {
+      const lightDistance = Vector3.DistanceSquared(missile.node.position, worldDeck);
+      if (burning && lightDistance < 72 ** 2 && lightDistance < nearestBurningDistance) {
         nearestBurningDistance = lightDistance;
         this.launchLight.position.copyFrom(missile.node.position);
-        this.launchLight.position.y = Math.max(this.launchLight.position.y, Vector3.TransformCoordinates(missile.cell.launchPoint, this.ship.getWorldMatrix()).y + .7);
-        this.launchLight.intensity = 6 * fade * flicker;
+        this.launchLight.position.y = Math.max(this.launchLight.position.y, worldDeck.y + .7);
+        const intensity = (isNight ? 15 : 6) * fade * flicker;
+        this.launchLight.intensity = intensity;
+      }
+      if (burning) {
+        // Vibrant booster flame glow illuminating nearby plume and airframe within 26m
+        lighting.addGlow(missile.node.position, 1.0, 0.58, 0.18, 9.0 * fade * flicker, 26);
+      }
+
+      if (missile.deckCloudTime < 2.5) {
+        const deckFade = Math.max(0, 1 - missile.deckCloudTime / 2.5);
+        this.deckLight.position.copyFrom(worldDeck).addInPlaceFromFloats(0, 1.8, 0);
+        const deckIntensity = (isNight ? 16 : 7) * deckFade * flicker;
+        this.deckLight.intensity = Math.max(this.deckLight.intensity, deckIntensity);
+        lighting.addGlow(worldDeck, 1.0, 0.48, 0.10, deckIntensity * 1.15, 36);
       }
 
       if (!state.boosterAttached && !missile.separated) this.separateBooster(missile);
-      if (missile.deckCloudTime < 1.65) {
+      if (missile.deckCloudTime < 3.2) {
         missile.deckCloudTime += delta;
         this.emitDeckCloud(worldDeck, delta, missile.deckCloudTime);
       }
@@ -273,6 +299,7 @@ export class MissileVls {
     this.smokeTexture.dispose();
     this.fireTexture.dispose();
     this.launchLight.dispose();
+    this.deckLight.dispose();
     for (const material of [this.bodyPaint, this.darkPaint, this.boosterPaint, this.flamePaint, this.corePaint]) material.dispose();
     this.missiles.length = this.debris.length = 0;
     this.pending = null;
@@ -376,33 +403,33 @@ export class MissileVls {
   }
 
   private emitDeckCloud(origin: Vector3, delta: number, age: number): void {
-    this.deckRemainder += delta * 350 * this.qualityScale * Math.max(0, 1 - age / 1.7);
+    this.deckRemainder += delta * 460 * this.qualityScale * Math.max(0, 1 - age / 3.2);
     const count = Math.floor(this.deckRemainder); this.deckRemainder -= count;
     for (let index = 0; index < count; index++) {
       const angle = Math.random() * Math.PI * 2;
-      const speed = 8 + Math.random() * 14;
+      const speed = 8 + Math.random() * 16;
       this.deckEmissions.push({
-        position: origin.add(new Vector3(Math.cos(angle) * .6, .2 + Math.random() * .7, Math.sin(angle) * .6)),
-        velocity: new Vector3(Math.cos(angle) * speed, 1 + Math.random() * 5, Math.sin(angle) * speed),
+        position: origin.add(new Vector3(Math.cos(angle) * .8, .2 + Math.random() * 1.1, Math.sin(angle) * .8)),
+        velocity: new Vector3(Math.cos(angle) * speed, 1.5 + Math.random() * 6, Math.sin(angle) * speed),
       });
     }
-    // A brief hot, tan pressure billow rises above the cold white cloud rolling
-    // across the deck, as seen in Mk 41 hot-launch photography.
-    this.ventRemainder += delta * 170 * this.qualityScale * Math.max(0, 1 - age / .85);
+    // A hot, high-pressure billow rises above the cloud rolling across the deck
+    this.ventRemainder += delta * 240 * this.qualityScale * Math.max(0, 1 - age / 2.6);
     const vents = Math.floor(this.ventRemainder); this.ventRemainder -= vents;
     for (let index = 0; index < vents; index++) {
       const angle = Math.random() * Math.PI * 2;
       this.ventEmissions.push({
-        position: origin.add(new Vector3(Math.cos(angle) * 1.1, 1 + Math.random() * 3.5, Math.sin(angle) * 1.1)),
-        velocity: new Vector3(Math.cos(angle) * (3 + Math.random() * 6), 10 + Math.random() * 12, Math.sin(angle) * (3 + Math.random() * 6)),
+        position: origin.add(new Vector3(Math.cos(angle) * 1.2, 1 + Math.random() * 4.2, Math.sin(angle) * 1.2)),
+        velocity: new Vector3(Math.cos(angle) * (3 + Math.random() * 7), 12 + Math.random() * 16, Math.sin(angle) * (3 + Math.random() * 7)),
       });
     }
-    this.ignitionRemainder += delta * 230 * this.qualityScale * Math.max(0, 1 - age / .55);
+    // Fiery plume venting out of the VLS hatch
+    this.ignitionRemainder += delta * 360 * this.qualityScale * Math.max(0, 1 - age / 2.2);
     const flames = Math.floor(this.ignitionRemainder); this.ignitionRemainder -= flames;
     for (let index = 0; index < flames; index++) {
       this.ignitionEmissions.push({
-        position: origin.add(new Vector3((Math.random() - .5) * .55, .35 + Math.random() * 1.2, (Math.random() - .5) * .55)),
-        velocity: new Vector3((Math.random() - .5) * 5, 12 + Math.random() * 20, (Math.random() - .5) * 5),
+        position: origin.add(new Vector3((Math.random() - .5) * .85, .35 + Math.random() * 2.2, (Math.random() - .5) * .85)),
+        velocity: new Vector3((Math.random() - .5) * 6, 14 + Math.random() * 24, (Math.random() - .5) * 6),
       });
     }
   }
@@ -467,8 +494,11 @@ export class MissileVls {
     smoke.addColorGradient(1, new Color4(.94, .95, .93, 0));
     this.attachEmissionQueue(smoke, queue);
     const defaultUpdate = smoke.updateFunction;
+    const sampleScratch = { r: 1, g: 1, b: 1 };
     smoke.updateFunction = particles => {
       const dt = this.effectDelta;
+      const lighting = getSceneLighting(this.scene);
+      const isNight = lighting.night > 0.05;
       for (const particle of particles) {
         const damping = 1 - Math.exp(-dt * (deck ? 1.45 : hot ? .9 : .35));
         const rise = hot ? 2.8 : deck ? 1.5 : 1.1;
@@ -480,6 +510,18 @@ export class MissileVls {
         particle.direction.z += Math.cos(particle.position.y * .19 + particle.age * .8) * dt * .9;
       }
       defaultUpdate(particles);
+      if (isNight) {
+        for (const particle of particles) {
+          lighting.sampleInto(particle.position.x, particle.position.y, particle.position.z, sampleScratch);
+          particle.color.r = Math.min(1.0, particle.color.r * sampleScratch.r);
+          particle.color.g = Math.min(1.0, particle.color.g * sampleScratch.g);
+          particle.color.b = Math.min(1.0, particle.color.b * sampleScratch.b);
+          if (!deck && !hot) {
+            const fireBrightness = Math.max(0, (sampleScratch.r - 0.20) / 1.2);
+            particle.color.a *= Math.max(0.14, Math.min(1.0, 0.22 + fireBrightness * 0.78));
+          }
+        }
+      }
     };
     configureWeaponParticles(smoke, this.scene);
     smoke.start();
